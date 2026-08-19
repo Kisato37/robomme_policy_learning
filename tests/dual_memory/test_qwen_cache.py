@@ -2,6 +2,7 @@ import json
 
 import numpy as np
 import pytest
+from concurrent.futures import ThreadPoolExecutor
 
 from examples.robomme.subgoal_prediction.qwenvl.qwen_cache import (
     ContentAddressedQwenCache,
@@ -70,3 +71,13 @@ def test_jsonl_call_log_appends_complete_records(tmp_path):
     append_jsonl(path, {"cache_hit": True, "output_tokens": 10})
     records = [json.loads(line) for line in path.read_text().splitlines()]
     assert [record["cache_hit"] for record in records] == [False, True]
+
+
+def test_concurrent_identical_cache_writes_are_serialized(tmp_path):
+    checkpoint = tmp_path / "checkpoint.bin"
+    checkpoint.write_bytes(b"weights")
+    cache = ContentAddressedQwenCache(tmp_path / "cache", checkpoint)
+    value = {"raw_response": "same deterministic response"}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(lambda _: cache.put("shared", value), range(32)))
+    assert cache.get("shared") == value

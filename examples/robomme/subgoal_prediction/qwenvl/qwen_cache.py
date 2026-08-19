@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import numpy as np
+from filelock import FileLock
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -90,17 +91,21 @@ class ContentAddressedQwenCache:
 
     def get(self, key: str) -> dict | None:
         path = self.objects / f"{key}.json"
-        return json.loads(path.read_text()) if path.exists() else None
+        with FileLock(str(path) + ".lock"):
+            return json.loads(path.read_text()) if path.exists() else None
 
     def put(self, key: str, value: dict) -> None:
         path = self.objects / f"{key}.json"
         content = json.dumps(value, indent=2, sort_keys=True) + "\n"
-        try:
-            with path.open("x") as stream:
-                stream.write(content)
-        except FileExistsError:
-            if path.read_text() != content:
-                raise RuntimeError(f"Cache-key collision or non-deterministic response: {key}")
+        with FileLock(str(path) + ".lock"):
+            try:
+                with path.open("x") as stream:
+                    stream.write(content)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+            except FileExistsError:
+                if path.read_text() != content:
+                    raise RuntimeError(f"Cache-key collision or non-deterministic response: {key}")
 
 
 def append_jsonl(path: str | Path, record: dict) -> None:
