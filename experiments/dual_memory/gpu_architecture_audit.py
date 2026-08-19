@@ -211,6 +211,34 @@ def main() -> None:
     with args.output.open("x") as stream:
         json.dump(report, stream, indent=2, sort_keys=True)
         stream.write("\n")
+    canonical_gradient = args.output.parent / "gradient_report.json"
+    with canonical_gradient.open("x") as stream:
+        json.dump(
+            {
+                "status": report["status"],
+                "gradient_flow": report["gradient_flow"],
+                "causal_interventions": report["causal_interventions"],
+                "checkpoint_compatibility": report["checkpoint_compatibility"],
+            },
+            stream,
+            indent=2,
+            sort_keys=True,
+        )
+        stream.write("\n")
+    shape_trace = args.output.parent / "tensor_shape_trace.json"
+    with shape_trace.open("x") as stream:
+        json.dump(
+            {
+                "model": "SP",
+                "history_config": report["history_config"],
+                "device_count": report["device_count"],
+                "input_shapes": report["input_shapes"],
+            },
+            stream,
+            indent=2,
+            sort_keys=True,
+        )
+        stream.write("\n")
     if report["status"] != "pass":
         raise RuntimeError(f"SP architecture audit failed; see {args.output}")
 
