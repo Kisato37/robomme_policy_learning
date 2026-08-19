@@ -10,6 +10,7 @@
 set -euo pipefail
 repo=/home/jp673/robomme_dual_memory/robomme_policy_learning
 run_root="$repo/outputs/dual_memory/20260818-214308_ecf086c"
+report_name="${OFFICIAL_TEST_REPORT:-official_test_report.txt}"
 cd "$repo"
 .venv/bin/python experiments/dual_memory/run_official_tests.py \
-  --repo "$repo" --output "$run_root/tests/official_test_report.txt"
+  --repo "$repo" --output "$run_root/tests/$report_name"
