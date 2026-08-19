@@ -17,3 +17,7 @@ cd "$repo"
   --sample-count 100 \
   --visual-count 20 \
   --seed 20260818
+.venv/bin/python experiments/dual_memory/record_phase_status.py \
+  --run-root "outputs/dual_memory/$run_id" --phase Phase-1 --status completed \
+  --evidence audits/data_audit.json --evidence audits/data_audit.md \
+  --next "Run the 8-GPU architecture gate after Phase 0 also passes."

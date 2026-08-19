@@ -7,6 +7,8 @@ import argparse
 import csv
 import json
 import re
+import subprocess
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -228,6 +230,18 @@ def main() -> None:
     ]
     with final_report.open("x") as stream:
         stream.write("\n".join(lines) + "\n")
+    subprocess.check_call(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("record_phase_status.py")),
+            "--run-root", str(args.run_root),
+            "--phase", "Phase-6", "--status", "completed",
+            "--evidence", "analysis/paired_statistics.json",
+            "--evidence", "analysis/failure_taxonomy.csv",
+            "--evidence", "FINAL_REPORT.md",
+            "--next", "Experiment complete; review the GO/NO-GO recommendation.",
+        ]
+    )
 
 
 if __name__ == "__main__":

@@ -54,6 +54,10 @@ CUDA_VISIBLE_DEVICES=1 PYTHONPATH=examples/robomme \
 .venv/bin/python experiments/dual_memory/build_qwen_smoke_audit.py \
   --eval-root "$run_root/smoke/evaluation" \
   --output "$run_root/audits/qwen_smoke_audit.json"
+.venv/bin/python experiments/dual_memory/record_phase_status.py \
+  --run-root "$run_root" --phase Phase-3 --status completed \
+  --evidence audits/qwen_smoke_audit.json --evidence audits/checkpoint_reload_smoke_SP_seed42.json \
+  --next "Run the paired five-task pilot."
 
 kill "$server_pid" 2>/dev/null || true
 wait "$server_pid" 2>/dev/null || true

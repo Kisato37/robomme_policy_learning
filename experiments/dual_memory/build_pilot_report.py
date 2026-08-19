@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -94,6 +96,17 @@ def main() -> None:
         stream.write("\n".join(lines) + "\n")
     if problems:
         raise RuntimeError(f"Pilot gate failed; see {json_output}")
+    subprocess.check_call(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("record_phase_status.py")),
+            "--run-root", str(args.run_root),
+            "--phase", "Phase-4", "--status", "completed",
+            "--evidence", "audits/pilot_report.json",
+            "--evidence", "audits/pilot_report.md",
+            "--next", "Freeze the environment and launch formal training.",
+        ]
+    )
 
 
 if __name__ == "__main__":

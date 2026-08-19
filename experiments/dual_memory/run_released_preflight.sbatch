@@ -61,3 +61,7 @@ run_reference perceptual-framesamp-modul released-P none 18112
 
 .venv/bin/python experiments/dual_memory/build_preflight_report.py \
   --run-root "$run_root" --output "$run_root/audits/preflight_report.md"
+.venv/bin/python experiments/dual_memory/record_phase_status.py \
+  --run-root "$run_root" --phase Phase-0 --status completed \
+  --evidence audits/preflight_report.md --evidence tests/official_test_report.txt \
+  --next "Complete data and architecture audits."

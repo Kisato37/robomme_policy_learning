@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -14,6 +15,14 @@ from experiments.dual_memory.run_training import build_config, write_config_snap
 
 MODELS = ["N", "S", "P", "SP"]
 SEEDS = [42, 43, 44]
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def smoke_rate(run_root: Path, model: str) -> float:
@@ -116,11 +125,23 @@ def main() -> None:
     manifest = {
         **prereg,
         "status": "formal_training_launched_after_all_engineering_gates",
+        "research_hypotheses": {
+            "H1": "GroundSG and perceptual history provide complementary conditioning to one Action Expert.",
+            "H2": "Failure of SP-Oracle to beat both matched single-memory baselines is an architecture no-go before Qwen scaling.",
+            "H3": "Oracle GO with Qwen NO-GO identifies the grounded-subgoal predictor as the primary bottleneck.",
+            "H4": "Benefits and costs may be task-specific and require per-task reporting.",
+        },
         "environment": environment,
         "asset_manifests": {
-            "data": "environment/data_assets.json",
-            "models": "environment/model_assets.json",
-            "qwen": "environment/qwen_setup.json",
+            name: {
+                "path": f"environment/{filename}",
+                "sha256": file_sha256(args.run_root / "environment" / filename),
+            }
+            for name, filename in {
+                "data": "data_assets.json",
+                "models": "model_assets.json",
+                "qwen": "qwen_setup.json",
+            }.items()
         },
         "formal_schedule": record,
         "documented_deviations": [

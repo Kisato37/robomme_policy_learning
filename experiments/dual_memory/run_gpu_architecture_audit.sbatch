@@ -29,3 +29,7 @@ fi
   --base-params /home/jp673/robomme_dual_memory/openpi_data/openpi-assets/checkpoints/pi05_base/params \
   --assets-base-dir runs/assets \
   --output "$run_root/audits/sp_gpu_architecture_audit.json"
+.venv/bin/python experiments/dual_memory/record_phase_status.py \
+  --run-root "$run_root" --phase Phase-2 --status completed \
+  --evidence audits/sp_gpu_architecture_audit.json --evidence tests/test_report_phase2_final.txt \
+  --next "Run matched training and rollout smokes."

@@ -79,6 +79,22 @@ def main() -> None:
         "benchmark_uv_lock_sha256": sha256(benchmark / "uv.lock"),
     }
     write_once(environment / "environment_summary.json", json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    model_assets = json.loads((environment / "model_assets.json").read_text())
+    qwen_assets = json.loads((environment / "qwen_setup.json").read_text())
+    checkpoint_hashes = {
+        "released_and_base_checkpoints": model_assets,
+        "qwen_base": {
+            "repo_id": qwen_assets["repo_id"],
+            "revision": qwen_assets["revision"],
+            "root": qwen_assets["root"],
+            "files": qwen_assets["files"],
+            "total_bytes": qwen_assets["total_bytes"],
+        },
+    }
+    write_once(
+        environment / "checkpoint_hashes.json",
+        json.dumps(checkpoint_hashes, indent=2, sort_keys=True) + "\n",
+    )
 
 
 if __name__ == "__main__":
