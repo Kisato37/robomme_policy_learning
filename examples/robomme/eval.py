@@ -20,6 +20,7 @@ from utils import (
 from utils import RolloutRecorder
 from env_runner import EnvRunner
 from subgoal_predictor import build_subgoal_predictor, SubgoalPredictorBase
+from evaluation_records import EpisodeResultWriter
 
 # qwen3-vl environment variables
 os.environ['IMAGE_MAX_TOKEN_NUM'] = '256'
@@ -47,6 +48,7 @@ class Args:
     re_eval_tasks: str = "" # tasks split by comma
     only_tasks: str = "" # tasks split by comma
     exclude_tasks: str = "" # tasks split by comma
+    episode_ids: str = "" # comma-separated explicit IDs; empty uses the full protocol
 
     # VLM subgoal predictor
     use_oracle: bool = False
@@ -57,8 +59,15 @@ class Args:
     gemini_model_name: str = "gemini-2.5-pro"
     qwenvl_simpleSG_adapter_path: str = "runs/ckpts/vlm_subgoal_predictor/qwenvl/simple_subgoal/checkpoint-1400"
     qwenvl_groundSG_adapter_path: str = "runs/ckpts/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200"
+    qwenvl_base_model_path: str = "runs/ckpts/vlm_subgoal_predictor/qwenvl/Qwen3-VL-4B-Instruct"
     memer_adapter_path: str = "runs/ckpts/vlm_subgoal_predictor/memer/grounded_subgoal/checkpoint-1300"
     subgoal_keep_period: int = 1 # ever subgoal should be kept for this many steps
+    qwen_cache_dir: str = "runs/evaluation/qwen_cache"
+    dual_memory_run_root: str = ""
+    model_id: str = ""
+    training_seed: int = -1
+    symbolic_source: str = "none"
+    evaluation_scope: str = "unspecified"
     # this can accelerate the evaluation process for symbolic memory
     # In our experiments, we just set this to 1
 
@@ -91,6 +100,10 @@ class EpisodeEvaluator:
         success_flag = "unknown"
         subgoal = None
         last_subgoal = None
+        subgoal_sequence = []
+        history_lengths = []
+        policy_latencies_ms = []
+        policy_model_latencies_ms = []
 
         while True:
             subgoal_predictor.step(epstate)
@@ -113,6 +126,10 @@ class EpisodeEvaluator:
                     client, epstate, img, wrist_img, robot_state, prompt, subgoal, 
                     exec_horizon=self.args.obs_horizon
                 )
+                subgoal_sequence.append(subgoal)
+                history_lengths.append(epstate.total_history_frames_sent)
+                policy_latencies_ms.append(self._last_policy_latency_ms)
+                policy_model_latencies_ms.append(self._last_policy_model_latency_ms)
 
                 epstate.action_plan.extend(action_chunk)
                 epstate.clear_buffers()
@@ -148,6 +165,22 @@ class EpisodeEvaluator:
         recorder.save_video(video_filename)
 
         subgoal_predictor.end_episode(epstate, success_flag)
+        info = getattr(env_runner, "info", {}) or {}
+        self.last_episode_record = {
+            "task": env_runner.env_id,
+            "episode_id": int(env_runner.episode_id),
+            "success": success_flag == "success",
+            "terminal_reason": success_flag,
+            "terminal_state": str(info.get("status", success_flag)),
+            "steps": int(epstate.count),
+            "collision": bool(info.get("collision", False)),
+            "timeout": success_flag == "timeout",
+            "subgoal_sequence": subgoal_sequence,
+            "history_lengths_at_policy_calls": history_lengths,
+            "policy_latency_ms": policy_latencies_ms,
+            "policy_model_latency_ms": policy_model_latencies_ms,
+            "video_path": str(video_save_dir / video_filename),
+        }
         return success_flag
 
 
@@ -193,6 +226,7 @@ class EpisodeEvaluator:
         exec_horizon: int,
     ) -> list:
         if self.args.use_history:
+            segment_length = len(state.image_buffer)
             resp = client.add_buffer(pack_buffer(
                 state.image_buffer,
                 state.state_buffer,
@@ -200,6 +234,7 @@ class EpisodeEvaluator:
             ))
             while not resp.get("add_buffer_finished", False):
                 time.sleep(0.1)
+            state.total_history_frames_sent += segment_length
 
         element = {
             "observation/image": img,
@@ -212,7 +247,11 @@ class EpisodeEvaluator:
             element['simple_subgoal'] = subgoal
             element['grounded_subgoal'] = subgoal
 
-        action_chunk = client.infer(element)["actions"]
+        request_started = time.monotonic()
+        response = client.infer(element)
+        self._last_policy_latency_ms = (time.monotonic() - request_started) * 1000
+        self._last_policy_model_latency_ms = float(response.get("infer_time_ms", float("nan")))
+        action_chunk = response["actions"]
         return action_chunk[:exec_horizon]
 
 
@@ -300,6 +339,7 @@ def evaluate(args: Args):
 
     subgoal_predictor = build_subgoal_predictor(args, save_dir)
     evaluator = EpisodeEvaluator(args, save_dir)
+    result_writer = EpisodeResultWriter(args.dual_memory_run_root) if args.dual_memory_run_root else None
 
     while not os.path.exists(save_dir / "log.json"):
         for task_name in task_names:
@@ -308,10 +348,20 @@ def evaluate(args: Args):
 
             env_runner = EnvRunner(task_name, video_save_dir, max_steps=args.max_steps)
             num_episodes = env_runner.num_episodes
+            episode_ids = (
+                [int(value) for value in args.episode_ids.split(",") if value.strip()]
+                if args.episode_ids
+                else list(range(num_episodes))
+            )
+            invalid_ids = [value for value in episode_ids if value < 0 or value >= num_episodes]
+            if invalid_ids:
+                raise ValueError(
+                    f"Episode IDs {invalid_ids} are outside the official range 0..{num_episodes - 1}"
+                )
 
             success_flag = "unknown"
 
-            for episode_id in range(num_episodes):
+            for episode_id in episode_ids:
                 if str(episode_id) in log_dict[task_name]:
                     print(f"[robomme] episode {episode_id} already evaluated, skipping...")
                     continue
@@ -319,23 +369,53 @@ def evaluate(args: Args):
                 env_runner.make_env(episode_id)
                 print(f"\n[robomme] env for task {task_name} episode {episode_id} setup finished")
 
+                episode_exception = None
                 try:
                     success_flag = evaluator.eval_each_episode(env_runner, subgoal_predictor, video_save_dir)
                     if success_flag == "unknown":
                         log_dict[task_name][episode_id] = "error"
                     else:
                         log_dict[task_name][episode_id] = success_flag == "success"
+                        if result_writer is not None:
+                            result_writer.append_episode(
+                                {
+                                    **evaluator.last_episode_record,
+                                    "model_id": args.model_id,
+                                    "training_seed": args.training_seed,
+                                    "evaluation_policy_seed": args.model_seed,
+                                    "symbolic_source": args.symbolic_source,
+                                    "checkpoint_id": args.model_ckpt_id,
+                                    "evaluation_scope": args.evaluation_scope,
+                                }
+                            )
                 except Exception as e:
                     print(f"Error evaluating episode {episode_id} for task {task_name}: {e}")
                     log_dict[task_name][episode_id] = "error"
+                    episode_exception = e
+                    if result_writer is not None:
+                        result_writer.append_infra_failure(
+                            {
+                                "model_id": args.model_id,
+                                "training_seed": args.training_seed,
+                                "symbolic_source": args.symbolic_source,
+                                "task": task_name,
+                                "episode_id": episode_id,
+                                "error_type": type(e).__name__,
+                                "error": str(e),
+                            }
+                        )
 
                 env_runner.close_env()
                 with open(save_dir / "progress.json", "w") as f:
                     json.dump(log_dict, f, indent=2)
 
+                if episode_exception is not None:
+                    raise RuntimeError(
+                        f"Infrastructure failure for {task_name}/{episode_id}; scientific retry is forbidden"
+                    ) from episode_exception
+
                 if success_flag == "unknown":
-                    print("API calling error, aborting...")
-                    return
+                    raise RuntimeError("Subgoal predictor API error; aborting without a scientific result")
 
             del env_runner
             time.sleep(1)

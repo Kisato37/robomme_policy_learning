@@ -1,7 +1,9 @@
 import dataclasses
 import functools
+import json
 import logging
 import platform
+import os
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -89,11 +91,55 @@ def init_wandb(
     if log_code:
         wandb.run.log_code(epath.Path(__file__).parent.parent)
 
+def _write_or_verify_text(path, content: str):
+    if path.exists():
+        if path.read_text() != content:
+            raise RuntimeError(f"Refusing to overwrite immutable checkpoint metadata: {path}")
+        return
+    path.write_text(content)
+
+
+def _append_jsonl(path, record: dict):
+    line = json.dumps(record, sort_keys=True) + "\n"
+    descriptor = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        os.write(descriptor, line.encode())
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def init_history_config(config: _config.TrainConfig):
     # this is for evaluation config checking
+    metadata = {
+        "history_config": None,
+        "integration_type": None,
+        "representation_type": None,
+        "use_symbolic_prompt": False,
+        "symbolic_prompt_type": None,
+        "symbolic_source": "none",
+    }
     if config.model.history_config is not None:
-        with open(config.checkpoint_dir / "history_config.txt", "w") as f:
-            f.write(config.model.history_config)
+        history_config = get_history_config(config.model.history_config)
+        use_symbolic_prompt, symbolic_prompt_type, symbolic_source = (
+            config.model._resolve_symbolic_options(history_config)
+        )
+        _write_or_verify_text(
+            config.checkpoint_dir / "history_config.txt",
+            str(config.model.history_config),
+        )
+        metadata = {
+            "history_config": str(config.model.history_config),
+            "integration_type": history_config.integration_type,
+            "representation_type": history_config.representation_type,
+            "use_symbolic_prompt": use_symbolic_prompt,
+            "symbolic_prompt_type": symbolic_prompt_type,
+            "symbolic_source": symbolic_source,
+        }
+    _write_or_verify_text(
+        config.checkpoint_dir / "model_config.json",
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+    )
 
 def _load_weights_and_validate(
     loader: _weight_loaders.WeightLoader, params_shape: at.Params
@@ -122,6 +168,34 @@ def params_split(params, trainable_filter):
         nnx.All(nnx.Param, nnx.Not(nnx_utils.PathRegex(".*mem.*")))
     )
     return memory_filter, non_memory_filter
+
+
+def gradient_group_norms(grads) -> dict[str, at.Array]:
+    """Split trainable gradients into the preregistered architecture groups."""
+    flat = traverse_util.flatten_dict(grads.to_pure_dict(), sep="/")
+
+    def group_norm(predicate):
+        leaves = [value for path, value in flat.items() if predicate(path)]
+        return optax.global_norm(leaves) if leaves else jnp.asarray(0.0)
+
+    is_memory = lambda path: "mem" in path.lower()
+    is_action = lambda path: (
+        path.startswith("action_")
+        or path.startswith("time_mlp_")
+        or "/_1/" in path
+        or "_1/" in path
+    )
+    is_llm = lambda path: path.startswith("PaliGemma/llm/")
+    return {
+        "memory_grad_norm": group_norm(is_memory),
+        "action_grad_norm": group_norm(lambda path: is_action(path) and not is_memory(path)),
+        "vlm_grad_norm": group_norm(
+            lambda path: is_llm(path) and not is_action(path) and not is_memory(path)
+        ),
+        "siglip_grad_leaf_count": jnp.asarray(
+            sum(path.startswith("PaliGemma/img/") for path in flat), dtype=jnp.int32
+        ),
+    }
 
 
 @at.typecheck
@@ -278,6 +352,7 @@ def train_step(
         "grad_norm": optax.global_norm(grads),
         "param_norm": optax.global_norm(kernel_params),
         "llm_grad_norm": optax.global_norm(grads.PaliGemma.llm),
+        **gradient_group_norms(grads),
     }
     if config.model.use_history and hasattr(grads, "mem_encoder"):
         info["mem_enc_norm"] = optax.global_norm(grads.mem_encoder)
@@ -436,6 +511,14 @@ def main(config: _config.TrainConfig, tentative_run: bool = False):
             info_str = ", ".join(f"{k}={v:.4f}" for k, v in reduced_info.items())
             pbar.write(f"Step {step}: {info_str}")
             wandb.log(reduced_info, step=step)
+            _append_jsonl(
+                config.checkpoint_dir / "training_metrics.jsonl",
+                {
+                    "step": step,
+                    "wall_time_unix": time.time(),
+                    **{key: float(value) for key, value in reduced_info.items()},
+                },
+            )
             infos = []
 
         batch = next(data_iter)
@@ -451,6 +534,7 @@ def main(config: _config.TrainConfig, tentative_run: bool = False):
 
     logging.info("Waiting for checkpoint manager to finish")
     checkpoint_manager.wait_until_finished()
+    return train_state
 
 
 if __name__ == "__main__":

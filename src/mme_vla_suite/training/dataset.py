@@ -56,6 +56,15 @@ class RoboMMEDataset(Dataset):
         self.feature_dir = Path(self.dataset.dataset_path) / "features"
 
         if self.history_config is not None:
+            self.use_symbolic_prompt = (
+                self.history_config.representation_type == "symbolic"
+                or bool(self.history_config.get("use_symbolic_prompt", False))
+            )
+            self.symbolic_prompt_type = (
+                self.history_config.symbolic_memory.type
+                if self.history_config.representation_type == "symbolic"
+                else self.history_config.get("symbolic_prompt_type", None)
+            )
             self.img_emb_dim = self.history_config.memory_feature.img.input_dim
             self.pos_emb_dim = self.history_config.memory_feature.pos.input_dim
             self.state_emb_dim = self.history_config.memory_feature.state.input_dim
@@ -85,6 +94,8 @@ class RoboMMEDataset(Dataset):
                 self.mem_buffer = None
         else:
             logger.info("=== Do not use history ===")
+            self.use_symbolic_prompt = False
+            self.symbolic_prompt_type = None
         
         self.compute_norm_stats = compute_norm_stats
         
@@ -195,16 +206,15 @@ class RoboMMEDataset(Dataset):
         # During online evaluation, the ground-truth subgoal may change earlier than when it was recorded.
         # To make the model robust to this temporal shift and avoid train/test distribution mismatch,
         # we randomly sample from either subgoal or subgoal_online (early change).
-        if self.history_config is not None \
-            and self.history_config.representation_type == "symbolic" \
-            and self.history_config.symbolic_memory.type in ["simple_subgoal", "grounded_subgoal"] \
+        if self.use_symbolic_prompt \
+            and self.symbolic_prompt_type in ["simple_subgoal", "grounded_subgoal"] \
             and random.random() < 0.5: 
             data["simple_subgoal"] = data["simple_subgoal_online"]
             data["grounded_subgoal"] = data["grounded_subgoal_online"]
         data.pop("simple_subgoal_online")
         data.pop("grounded_subgoal_online")
         
-        if self.history_config is not None and self.history_config.representation_type == "symbolic":
+        if self.use_symbolic_prompt:
             data["grounded_subgoal"] = self.add_grounding_augmentation(data["grounded_subgoal"], noise_range=8)
             data["simple_subgoal"] = self.add_grounding_augmentation(data["simple_subgoal"], noise_range=8)
  

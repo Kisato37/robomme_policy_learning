@@ -53,6 +53,21 @@ def check_args(args):
     assert args.subgoal_type in ["simple_subgoal", "grounded_subgoal", None] and args.obs_horizon == 16
     if args.use_memer:
         args.subgoal_type = "grounded_subgoal"
+    source_count = sum(
+        bool(value)
+        for value in [args.use_oracle, args.use_qwenvl, args.use_memer, args.use_gemini]
+    )
+    if args.subgoal_type is None:
+        assert source_count == 0, "A symbolic source requires a subgoal_type"
+    else:
+        assert source_count == 1, "Exactly one symbolic source is required"
+    expected_source = (
+        "oracle" if args.use_oracle else "qwenvl" if args.use_qwenvl else "none"
+    )
+    if args.subgoal_type is not None and args.symbolic_source == "none":
+        args.symbolic_source = expected_source
+    else:
+        assert args.symbolic_source == expected_source
 
 
 
@@ -64,6 +79,10 @@ class EpisodeState:
         self.action_plan = collections.deque()
         self.count = 0
         self.exec_start_idx = 0
+        # The client sends non-overlapping segments, while the policy server
+        # retains them as one episode-long memory.  Do not reset this counter
+        # when clearing the segment buffers.
+        self.total_history_frames_sent = 0
 
     def add_observation(self, img: np.ndarray, wrist_img: np.ndarray, state: np.ndarray):
         self.image_buffer.append(img.copy())

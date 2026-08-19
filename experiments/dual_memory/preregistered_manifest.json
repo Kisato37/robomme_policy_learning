@@ -1,0 +1,40 @@
+{
+  "run_id": "20260818-214308_ecf086c",
+  "status": "preregistered_before_training_and_evaluation",
+  "policy_commit": "ecf086c3be7c2223167d9bb2f6ef1f0a6e24353b",
+  "benchmark_commit": "856bc3a189d4172f3f47dbee4424d585f8d78db3",
+  "training_seeds": [42, 43, 44],
+  "evaluation_policy_seed": 7,
+  "evaluation_episode_ids": {
+    "task_count": 16,
+    "per_task": 50,
+    "ids": "0..49"
+  },
+  "checkpoint_selection": "final_step_79999; no test-result checkpoint selection",
+  "matched_training": {
+    "steps": 80000,
+    "batch_size": 64,
+    "optimizer": "AdamW(clip_gradient_norm=1.0)",
+    "peak_learning_rate": 0.00005,
+    "warmup_steps": 10000,
+    "decay_steps": 100000,
+    "ema_decay": 0.999,
+    "action_horizon": 20,
+    "fsdp_devices": 8,
+    "base_checkpoint": "gs://openpi-assets/checkpoints/pi05_base"
+  },
+  "models": {
+    "N": {"history_config": null, "symbolic": false, "perceptual": false},
+    "S": {"history_config": "symbolic-grounded-subgoal.yaml", "symbolic": true, "perceptual": false},
+    "P": {"history_config": "perceptual-framesamp-modul.yaml", "symbolic": false, "perceptual": true},
+    "SP": {"history_config": "dual-grounded-framesamp-modul.yaml", "symbolic": true, "perceptual": true}
+  },
+  "oracle_go": {
+    "minimum_absolute_gain_percentage_points": 3.0,
+    "comparison": "SP-Oracle - max(S-Oracle, P)",
+    "paired_95_ci_lower_bound_gt": 0.0
+  },
+  "qwen_gate": "Run full S-Qwen and SP-Qwen only if Oracle architecture gate passes; otherwise retain diagnostic Qwen samples only.",
+  "scientific_retries": "none; retry only documented infrastructure failures",
+  "formal_results_are_write_once": true
+}

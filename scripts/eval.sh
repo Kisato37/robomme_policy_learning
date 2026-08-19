@@ -3,8 +3,9 @@
 # pi05_baseline, MemER
 
 # Symbolic Memory:
-# symbolic_simpleSG_oracle,  symbolic_simpleSG_gemini,  symbolic_simpleSG_qwenvl, 
+# symbolic_simpleSG_oracle,  symbolic_simpleSG_gemini,  symbolic_simpleSG_qwenvl,
 # symbolic_groundedSG_oracle, symbolic_groundedSG_gemini, symbolic_groundedSG_qwenvl
+# dual_groundedSG_oracle, dual_groundedSG_qwenvl
 
 # Perceptual Memory:
 # perceptual-framesamp-context, perceptual-framesamp-modul, perceptual-framesamp-expert
@@ -65,6 +66,13 @@ else
     elif [ "$MODEL_TYPE" == "symbolic_groundedSG_qwenvl" ]; then
         EXTRA_ARGS="--args.use-qwenvl --args.subgoal-type=grounded_subgoal"
         MODEL_TYPE="symbolic-grounded-subgoal"
+
+    elif [ "$MODEL_TYPE" == "dual_groundedSG_oracle" ]; then
+        EXTRA_ARGS="--args.use-oracle --args.subgoal-type=grounded_subgoal"
+        MODEL_TYPE="dual-grounded-framesamp-modul"
+    elif [ "$MODEL_TYPE" == "dual_groundedSG_qwenvl" ]; then
+        EXTRA_ARGS="--args.use-qwenvl --args.subgoal-type=grounded_subgoal"
+        MODEL_TYPE="dual-grounded-framesamp-modul"
 
     elif [ "$MODEL_TYPE" == "symbolic_simpleSG_gemini" ]; then
         EXTRA_ARGS="--args.use-gemini --args.subgoal-type=simple_subgoal"

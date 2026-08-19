@@ -239,6 +239,10 @@ class ModelTransformFactory(GroupFactory):
 
                     if loaded_config.representation_type == "symbolic":
                         symbolic_memory_type = loaded_config.symbolic_memory.type
+                    elif loaded_config.get("use_symbolic_prompt", False):
+                        symbolic_memory_type = loaded_config.get("symbolic_prompt_type", None)
+
+                    if symbolic_memory_type is not None:
                         max_token_len *= 2 # it's enough for subgoals, no need to set into 512.
                 
                 print(f"max_token_len: {max_token_len}")

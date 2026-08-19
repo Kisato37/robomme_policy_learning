@@ -80,24 +80,66 @@ class HistoryPi0Config(Pi0Config):
 
     use_history: bool = False  # Use history or not
     history_config: str | None = None  # history config
+    # Symbolic prompting is independent from the memory representation.  This
+    # keeps the official perceptual FrameSamp/Modulator path intact while
+    # allowing the same VLM prefix used by the symbolic baseline.
+    use_symbolic_prompt: bool = False
+    symbolic_prompt_type: str | None = None
+    symbolic_source: str = "none"
     max_token_len: int = 64
+
+    def _resolve_symbolic_options(self, history_config):
+        representation_type = history_config.representation_type
+        use_symbolic_prompt = self.use_symbolic_prompt or bool(
+            history_config.get("use_symbolic_prompt", False)
+        )
+        if representation_type == "symbolic":
+            use_symbolic_prompt = True
+
+        symbolic_prompt_type = self.symbolic_prompt_type or history_config.get(
+            "symbolic_prompt_type", None
+        )
+        if representation_type == "symbolic":
+            symbolic_prompt_type = history_config.symbolic_memory.type
+
+        symbolic_source = history_config.get("symbolic_source", self.symbolic_source)
+        if use_symbolic_prompt:
+            if symbolic_prompt_type not in ["simple_subgoal", "grounded_subgoal"]:
+                raise ValueError(
+                    "symbolic_prompt_type must be simple_subgoal or grounded_subgoal "
+                    "when use_symbolic_prompt is enabled"
+                )
+            if symbolic_source not in ["none", "oracle", "qwenvl"]:
+                raise ValueError(
+                    "symbolic_source must be none, oracle, or qwenvl"
+                )
+        elif symbolic_source != "none":
+            raise ValueError("symbolic_source must be none when symbolic prompting is disabled")
+
+        return use_symbolic_prompt, symbolic_prompt_type, symbolic_source
 
     @override
     def create(self, rng: at.KeyArrayLike) -> "HistoryPi0":
         # Load the history config if it's specified
         if self.history_config is not None:
             loaded_config = get_history_config(self.history_config)
+            use_symbolic_prompt, symbolic_prompt_type, symbolic_source = (
+                self._resolve_symbolic_options(loaded_config)
+            )
             # Create a new config with the loaded history config
-            config_with_loaded_history = dataclasses.replace(self, history_config=loaded_config)
+            config_with_loaded_history = dataclasses.replace(
+                self,
+                history_config=loaded_config,
+                use_symbolic_prompt=use_symbolic_prompt,
+                symbolic_prompt_type=symbolic_prompt_type,
+                symbolic_source=symbolic_source,
+            )
             
             max_token_len = self.max_token_len
-            if loaded_config.representation_type == "symbolic":
-                if loaded_config.symbolic_memory.type in ["simple_subgoal", "grounded_subgoal"]:
-                    max_token_len *= 2
-                else:
-                    raise ValueError(f"Not supported symbolic memory type: {loaded_config.symbolic_memory.type}")
+            if use_symbolic_prompt:
+                max_token_len *= 2
                 config_with_loaded_history = dataclasses.replace(config_with_loaded_history, max_token_len=max_token_len) 
-                print("symbolic_memory_type: ", loaded_config.symbolic_memory.type)
+                print("symbolic_prompt_type: ", symbolic_prompt_type)
                    
             print("max_token_len: ", config_with_loaded_history.max_token_len)
 
@@ -111,83 +153,95 @@ class HistoryPi0Config(Pi0Config):
             if not self.use_history:
                 observation_spec = base_obs_spec  # basic pi0
             else:
-                if self.history_config.representation_type == "symbolic":
+                history_config = get_history_config(self.history_config)
+                use_symbolic_prompt, _, _ = self._resolve_symbolic_options(history_config)
+                symbolic_token_len = self.max_token_len
+                if use_symbolic_prompt and isinstance(self.history_config, str):
+                    symbolic_token_len *= 2
+                symbolic_specs = {}
+                if use_symbolic_prompt:
+                    symbolic_specs = {
+                        "symbolic_tokenized_prompt": jax.ShapeDtypeStruct(
+                            [batch_size, symbolic_token_len], jnp.int32
+                        ),
+                        "symbolic_tokenized_prompt_mask": jax.ShapeDtypeStruct(
+                            [batch_size, symbolic_token_len], bool
+                        ),
+                    }
+
+                if history_config.representation_type == "symbolic":
                     observation_spec = HistAugObservation.from_base_obs(
                         base_obs_spec,
-                        symbolic_tokenized_prompt=jax.ShapeDtypeStruct(
-                            [batch_size, self.max_token_len], jnp.int32
-                        ),
-                        symbolic_tokenized_prompt_mask=jax.ShapeDtypeStruct(
-                            [batch_size, self.max_token_len], bool
-                        ),
+                        **symbolic_specs,
                     )
-                elif self.history_config.representation_type == "perceptual":
+                elif history_config.representation_type == "perceptual":
                     observation_spec = HistAugObservation.from_base_obs(
                         base_obs_spec,
                         static_image_emb=jax.ShapeDtypeStruct(
                             [
                                 batch_size,
-                                self.history_config.budget,
-                                self.history_config.memory_feature.img.input_dim,
+                                history_config.budget,
+                                history_config.memory_feature.img.input_dim,
                             ],
                             jnp.float32,
                         ),
                         static_mask=jax.ShapeDtypeStruct(
-                            [batch_size, self.history_config.budget],
+                            [batch_size, history_config.budget],
                             jnp.bool_,
                         ),
                         static_pos_emb=jax.ShapeDtypeStruct(
                             [
                                 batch_size,
-                                self.history_config.budget,
-                                self.history_config.memory_feature.pos.input_dim,
+                                history_config.budget,
+                                history_config.memory_feature.pos.input_dim,
                             ],
                             jnp.float32,
                         ),
                         static_state_emb=jax.ShapeDtypeStruct(
                             [
                                 batch_size,
-                                self.history_config.budget,
-                                self.history_config.memory_feature.state.input_dim,
+                                history_config.budget,
+                                history_config.memory_feature.state.input_dim,
                             ],
                             jnp.float32,
                         ),
+                        **symbolic_specs,
                     )
-                elif self.history_config.representation_type == "recurrent":
+                elif history_config.representation_type == "recurrent":
                     observation_spec = HistAugObservation.from_base_obs(
                         base_obs_spec,
                         recur_image_emb=jax.ShapeDtypeStruct(
                             [
                                 batch_size,
-                                self.history_config.recurrent_memory.max_recur_steps,
-                                self.history_config.num_views,
-                                self.history_config.token_per_image,
-                                self.history_config.memory_feature.img.input_dim,
+                                history_config.recurrent_memory.max_recur_steps,
+                                history_config.num_views,
+                                history_config.token_per_image,
+                                history_config.memory_feature.img.input_dim,
                             ],
                             jnp.float32,
                         ),
                         recur_mask=jax.ShapeDtypeStruct(
                             [
                                 batch_size,
-                                self.history_config.recurrent_memory.max_recur_steps,
+                                history_config.recurrent_memory.max_recur_steps,
                             ],
                             jnp.bool_,
                         ),
                         recur_pos_emb=jax.ShapeDtypeStruct(
                             [
                                 batch_size,
-                                self.history_config.recurrent_memory.max_recur_steps,
-                                self.history_config.num_views,
-                                self.history_config.token_per_image,
-                                self.history_config.memory_feature.pos.input_dim,
+                                history_config.recurrent_memory.max_recur_steps,
+                                history_config.num_views,
+                                history_config.token_per_image,
+                                history_config.memory_feature.pos.input_dim,
                             ],
                             jnp.float32,
                         ),
                         recur_state_emb=jax.ShapeDtypeStruct(
                             [
                                 batch_size,
-                                self.history_config.recurrent_memory.max_recur_steps,
-                                self.history_config.memory_feature.state.input_dim,
+                                history_config.recurrent_memory.max_recur_steps,
+                                history_config.memory_feature.state.input_dim,
                             ],
                             jnp.float32,
                         ),
@@ -195,7 +249,7 @@ class HistoryPi0Config(Pi0Config):
 
                 else:
                     raise ValueError(
-                        f"Not supported representation type: {self.history_config.representation_type}"
+                        f"Not supported representation type: {history_config.representation_type}"
                     )
 
         return observation_spec, action_spec
@@ -243,6 +297,9 @@ class HistoryPi0(BaseModel):
 
         self.config = config
         self.use_history = config.use_history
+        self.use_symbolic_prompt = config.use_symbolic_prompt
+        self.symbolic_prompt_type = config.symbolic_prompt_type
+        self.symbolic_source = config.symbolic_source
         
         if self.use_history:
             self.history_config = config.history_config
@@ -465,7 +522,7 @@ class HistoryPi0(BaseModel):
             na_mask += [True] * image_tokens.shape[1]
 
         # add language (aka tokenized inputs)
-        if self.use_history and self.representation_type == "symbolic":
+        if self.use_history and self.use_symbolic_prompt:
             tokenized_inputs = self.PaliGemma.llm(
                 obs.symbolic_tokenized_prompt, method="embed"
             )
@@ -571,6 +628,22 @@ class HistoryPi0(BaseModel):
         time_expanded = time[..., None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
+
+        v_t, stats = self.predict_velocity_from_preprocessed(observation, x_t, time)
+
+        return jnp.mean(jnp.square(v_t - u_t), axis=-1), stats
+
+    def predict_velocity_from_preprocessed(
+        self,
+        observation: HistAugObservation,
+        x_t: Actions,
+        time: at.Float[at.Array, " b"],
+    ) -> tuple[Actions, Any | None]:
+        """Return the flow velocity for fixed preprocessed inputs.
+
+        Keeping this deterministic core separate lets the dual-memory audit hold
+        x_t and time fixed while intervening on exactly one memory channel.
+        """
         # one big forward pass of prefix + suffix at once
         prefix_tokens, prefix_mask, prefix_ar_mask, prefix_na_mask, stats = (
             self.embed_prefix(observation)
@@ -632,10 +705,8 @@ class HistoryPi0(BaseModel):
             )
 
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
-        
-        # import pdb; pdb.set_trace()
 
-        return jnp.mean(jnp.square(v_t - u_t), axis=-1), stats
+        return v_t, stats
 
     @override
     def sample_actions(
