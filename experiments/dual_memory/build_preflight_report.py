@@ -30,6 +30,14 @@ def main() -> None:
     ]
     if missing_videos:
         raise RuntimeError(f"Missing preflight videos: {missing_videos}")
+    official_test_path = args.run_root / "tests/official_test_report_retry1.txt"
+    official_test_text = official_test_path.read_text()
+    if "Exit code: 0" not in official_test_text:
+        raise RuntimeError(f"Official regression subset did not pass: {official_test_path}")
+    test_summary = next(
+        (line for line in reversed(official_test_text.splitlines()) if " passed" in line),
+        "official subset passed",
+    )
 
     lines = [
         "# Dual-memory Phase 0 preflight",
@@ -37,6 +45,7 @@ def main() -> None:
         "Status: **PASS**",
         "",
         "The independent policy and simulator environments completed fixed released-reference rollouts without an infrastructure error.",
+        f"The corrected single-CPU official non-manual regression subset also passed: `{test_summary}`.",
         "",
         "## Fixed rollout evidence",
         "",
@@ -60,6 +69,7 @@ def main() -> None:
         "- Released model revision: `5db4d53ddb98c7f80cab08792dd53d985d712ab1`.",
         "- Evaluation policy seed: `7`; fixed task/episode: `InsertPeg/0`.",
         "- The two released checkpoints are references only and do not replace matched N/S/P/SP training.",
+        f"- Official regression evidence: `{official_test_path}` (the original GPU-visible failure report is retained separately).",
     ]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("x") as stream:
