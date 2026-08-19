@@ -139,6 +139,26 @@ def main() -> None:
     }
     if qwen_jobs["scope"] == "full":
         qwen_summary["paired_statistics"] = qwen_bootstrap(qwen_records, oracle)
+        qwen_contrasts = qwen_summary["paired_statistics"]["contrasts"]
+        qwen_sp_rate = qwen_summary["paired_statistics"]["success_rates"]["SP-Qwen"]
+        oracle_sp_rate = json.loads(
+            (args.run_root / "analysis/paired_statistics.json").read_text()
+        )["overall"]["success_rates"]["SP"]
+        stable_gain = any(
+            qwen_contrasts[name]["estimate"] > 0 and qwen_contrasts[name]["ci95"][0] > 0
+            for name in ["SP-Qwen - S-Qwen", "SP-Qwen - P"]
+        )
+        qwen_summary["qwen_decision"] = {
+            "status": "go" if stable_gain and qwen_sp_rate >= oracle_sp_rate - 0.03 else "no-go",
+            "stable_positive_gain_vs_at_least_one_baseline": stable_gain,
+            "SP_Qwen_minus_SP_Oracle": qwen_sp_rate - oracle_sp_rate,
+            "no_more_than_3pp_degradation_vs_SP_Oracle": qwen_sp_rate >= oracle_sp_rate - 0.03,
+        }
+    else:
+        qwen_summary["qwen_decision"] = {
+            "status": "not_run_full_due_to_oracle_no_go",
+            "scientific_interpretation": "diagnostic calls only",
+        }
     write_json(qwen_summary_path, qwen_summary)
 
     oracle_by_key = {(r["model_id"], r["training_seed"], r["task"], r["episode_id"]): r for r in oracle}
@@ -156,6 +176,11 @@ def main() -> None:
                         "comparison": "SP_vs_single_memory", "training_seed": seed, "task": task,
                         "episode_id": episode, "label": label, "SP_success": sp["success"],
                         "S_success": s["success"], "P_success": p["success"], "video_path": sp["video_path"],
+                        "S_video_path": s["video_path"], "P_video_path": p["video_path"],
+                        "SP_subgoals": json.dumps(sp.get("subgoal_sequence", [])),
+                        "S_subgoals": json.dumps(s.get("subgoal_sequence", [])),
+                        "P_subgoals": json.dumps(p.get("subgoal_sequence", [])),
+                        "Qwen_subgoals": "",
                     })
                 qwen_sp = qwen_by_key.get(("SP", seed, task, episode))
                 if qwen_sp is not None and qwen_sp["success"] != sp["success"]:
@@ -171,15 +196,29 @@ def main() -> None:
                         "comparison": "SP_Oracle_vs_Qwen", "training_seed": seed, "task": task,
                         "episode_id": episode, "label": label, "SP_success": sp["success"],
                         "S_success": "", "P_success": "", "video_path": qwen_sp["video_path"],
+                        "S_video_path": "", "P_video_path": "",
+                        "SP_subgoals": json.dumps(sp.get("subgoal_sequence", [])),
+                        "S_subgoals": "", "P_subgoals": "",
+                        "Qwen_subgoals": json.dumps(qwen_sp.get("subgoal_sequence", [])),
                     })
-    fieldnames = ["comparison", "training_seed", "task", "episode_id", "label", "SP_success", "S_success", "P_success", "video_path"]
+    fieldnames = [
+        "comparison", "training_seed", "task", "episode_id", "label",
+        "SP_success", "S_success", "P_success", "video_path", "S_video_path", "P_video_path",
+        "SP_subgoals", "S_subgoals", "P_subgoals", "Qwen_subgoals",
+    ]
     with taxonomy_path.open("x", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(taxonomy)
     label_counts = Counter(row["label"] for row in taxonomy)
-    for index, row in enumerate(taxonomy[:20]):
-        extract_frame(Path(row["video_path"]), args.run_root / f"analysis/figures/failure_{index:02d}_{row['label']}.png")
+    representatives = []
+    for label in sorted(label_counts):
+        representatives.extend([row for row in taxonomy if row["label"] == label][:3])
+    for index, row in enumerate(representatives):
+        extract_frame(
+            Path(row["video_path"]),
+            args.run_root / f"analysis/figures/failure_{index:02d}_{row['label']}.png",
+        )
 
     paired = json.loads((args.run_root / "analysis/paired_statistics.json").read_text())
     rates = paired["overall"]["success_rates"]
@@ -195,8 +234,20 @@ def main() -> None:
 
     contrast = paired["overall"]["contrasts"]["SP-max(S,P)"]
     interaction = paired["overall"]["contrasts"]["interaction"]
-    if gate["status"] == "go":
-        recommendation = "Continue deeper fusion research; use the Qwen result below to decide whether predictor quality is now the limiting mechanism."
+    task_deltas = {
+        task: paired["per_task"][task]["success_rates"]["SP"]
+        - max(
+            paired["per_task"][task]["success_rates"]["S"],
+            paired["per_task"][task]["success_rates"]["P"],
+        )
+        for task in TASKS
+    }
+    largest_gains = sorted(task_deltas.items(), key=lambda item: item[1], reverse=True)[:3]
+    largest_costs = sorted(task_deltas.items(), key=lambda item: item[1])[:3]
+    if gate["status"] == "go" and qwen_summary["qwen_decision"]["status"] == "go":
+        recommendation = "Continue deeper fusion research; both the Oracle architecture and the deployable Qwen condition passed their preregistered gates."
+    elif gate["status"] == "go":
+        recommendation = "Keep the dual-memory interface and prioritize GroundSG predictor/grounding quality; Oracle passed while the Qwen condition did not."
     else:
         recommendation = "Stop scaling the current fusion interface; full Qwen evaluation was gated off and only diagnostics were retained."
     lines = [
@@ -209,6 +260,7 @@ def main() -> None:
         f"Matched success rates: N={rates['N']:.3%}, S-Oracle={rates['S']:.3%}, P={rates['P']:.3%}, SP-Oracle={rates['SP']:.3%}.",
         f"SP - max(S, P) = {contrast['estimate']:.3%}, hierarchical paired 95% CI [{contrast['ci95'][0]:.3%}, {contrast['ci95'][1]:.3%}].",
         f"2x2 interaction = {interaction['estimate']:.3%}, 95% CI [{interaction['ci95'][0]:.3%}, {interaction['ci95'][1]:.3%}].",
+        f"Largest task gains versus max(S,P): {largest_gains}; largest costs: {largest_costs}.",
         "",
         "Per-task results, task-family macro averages, raw counts, McNemar tests, and all paired intervals are in `analysis/paired_statistics.json`.",
         "",
@@ -216,6 +268,7 @@ def main() -> None:
         "",
         f"Qwen scope after the preregistered gate: **{qwen_jobs['scope']}**; episodes={len(qwen_records)}, actual calls={qwen_summary['actual_model_calls']}, cache hit rate={qwen_summary['cache_hit_rate']:.2%}.",
         f"Input/output tokens={qwen_summary['input_tokens']}/{qwen_summary['output_tokens']}; tokens per successful episode={qwen_summary['tokens_per_successful_episode']}.",
+        f"Qwen decision: {qwen_summary['qwen_decision']}.",
         "",
         "## Failure attribution",
         "",
