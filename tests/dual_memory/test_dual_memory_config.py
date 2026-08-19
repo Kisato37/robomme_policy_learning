@@ -10,6 +10,11 @@ from mme_vla_suite.models.integration.history_observation import HistAugObservat
 from mme_vla_suite.models.integration.history_pi0 import HistoryPi0Config
 from mme_vla_suite.shared.mem_buffer import MemoryBuffer
 from mme_vla_suite.training.config import TokenizePromptWithSymbolicMemory
+from mme_vla_suite.training.config import PaligemmaTokenizer
+from mme_vla_suite.training.dataset import RoboMMEDataset
+from mme_vla_suite.training import config as training_config
+from scripts.train import init_history_config
+import dataclasses
 
 
 N_CONFIG = None
@@ -165,3 +170,49 @@ def test_framesamp_budget_boundaries_and_reset():
     buffer._history_feats[0] = {"sentinel": True}
     buffer.clear()
     assert buffer._history_feats == {}
+
+
+def test_grounding_augmentation_clips_y_x_coordinates_to_front_image():
+    dataset = RoboMMEDataset.__new__(RoboMMEDataset)
+    noises = iter([-8, 8])
+    dataset._truncated_gaussian_noise = lambda _range: next(noises)
+    assert dataset.add_grounding_augmentation("grasp at <0, 255>") == "grasp at <0, 255>"
+
+
+class _LongTokenizer:
+    def encode(self, text, add_bos=False):
+        return list(range(20 + int(add_bos)))
+
+
+def test_symbolic_prompt_truncation_and_mask_are_explicit():
+    tokenizer = PaligemmaTokenizer.__new__(PaligemmaTokenizer)
+    tokenizer._max_len = 8
+    tokenizer._tokenizer = _LongTokenizer()
+    tokens, mask = tokenizer.tokenize("task", subgoal="ground at <0, 255>")
+    assert tokens.shape == mask.shape == (8,)
+    assert mask.dtype == np.bool_
+    assert mask.all()
+
+
+def test_checkpoint_metadata_is_written_for_n_and_sp_and_is_immutable(tmp_path):
+    base = training_config.get_config("mme_vla_suite")
+    for model_id, history in [("N", None), ("SP", SP_CONFIG)]:
+        model = dataclasses.replace(
+            base.model,
+            use_history=history is not None,
+            history_config=history,
+        )
+        config = dataclasses.replace(
+            base,
+            model=model,
+            exp_name=model_id,
+            checkpoint_base_dir=str(tmp_path),
+        )
+        config.checkpoint_dir.mkdir(parents=True)
+        init_history_config(config)
+        metadata_path = config.checkpoint_dir / "model_config.json"
+        first = metadata_path.read_text()
+        init_history_config(config)
+        assert metadata_path.read_text() == first
+        metadata = json.loads(first)
+        assert metadata["use_symbolic_prompt"] is (model_id == "SP")

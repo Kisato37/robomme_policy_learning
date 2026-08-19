@@ -127,6 +127,7 @@ def main() -> None:
             "Qwen uses the RoboMME-documented SDPA backend because Athena has no nvcc for optional flash-attn.",
             "Weights & Biases is disabled; append-only local training_metrics.jsonl is authoritative.",
             "Official 4xA40-40GB hardware is replaced by an audited 8xRTX-A5000-24GB FSDP layout.",
+            "Official GroundSG ±8-pixel training augmentation is clipped to the valid 0..255 (y,x) front-image range for both S and SP.",
         ],
     }
     manifest_path = args.run_root / "manifest.json"

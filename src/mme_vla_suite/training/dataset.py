@@ -188,13 +188,18 @@ class RoboMMEDataset(Dataset):
         if len(matches) == 0 or len(matches) > 1:
             return subgoal
         
-        x, y = matches[0]
-        x = int(x)
-        y = int(y)
-        noise_x = self._truncated_gaussian_noise(noise_range)
+        # RoboMME GroundSG uses (y, x) integer pixels in the 256x256 front
+        # image.  The official noise augmentation can otherwise cross an
+        # image boundary for edge points, producing an invalid training prompt.
+        y, x = (int(value) for value in matches[0])
         noise_y = self._truncated_gaussian_noise(noise_range)
+        noise_x = self._truncated_gaussian_noise(noise_range)
+        augmented_y = int(np.clip(y + noise_y, 0, 255))
+        augmented_x = int(np.clip(x + noise_x, 0, 255))
 
-        new_subgoal = subgoal.replace(f'at <{x}, {y}>', f'at <{x + noise_x}, {y + noise_y}>')
+        new_subgoal = subgoal.replace(
+            f'at <{y}, {x}>', f'at <{augmented_y}, {augmented_x}>'
+        )
         return new_subgoal
         
 
