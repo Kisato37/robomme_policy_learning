@@ -38,7 +38,9 @@ def main() -> None:
     policy_commit = command(["git", "rev-parse", "HEAD"], args.repo).strip()
     benchmark = args.repo / "third_party/robomme_benchmark"
     benchmark_commit = command(["git", "rev-parse", "HEAD"], benchmark).strip()
-    status = command(["git", "status", "--short"], args.repo)
+    # Runtime data/checkpoint/result roots are deliberately untracked.  Freeze
+    # requires every tracked source file to match the experiment commit.
+    status = command(["git", "status", "--short", "--untracked-files=no"], args.repo)
     if status.strip():
         raise RuntimeError(f"Formal launch requires a clean committed worktree:\n{status}")
     write_once(
