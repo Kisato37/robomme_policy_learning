@@ -1,0 +1,86 @@
+from __future__ import annotations
+
+import copy
+from pathlib import Path
+
+import pytest
+
+from experiments.keyframe_oracle_sampling import environment_contract
+from experiments.keyframe_oracle_sampling.environment_contract import (
+    EnvironmentContractError,
+    validate_environment_contract,
+)
+
+
+def _identity() -> dict:
+    return {
+        "environment_locks": {
+            "policy_uv_lock_sha256": "a" * 64,
+            "benchmark_uv_lock_sha256": "b" * 64,
+        },
+        "python_environments": {
+            "policy": {"interpreter_sha256": "c" * 64},
+            "simulator": {"interpreter_sha256": "d" * 64},
+        },
+    }
+
+
+def test_environment_contract_requires_and_matches_both_paths(monkeypatch):
+    identity = _identity()
+    monkeypatch.setattr(
+        environment_contract,
+        "live_environment_identity",
+        lambda: copy.deepcopy(identity),
+    )
+    assert validate_environment_contract(identity) == identity
+
+
+@pytest.mark.parametrize("field", ["environment_locks", "python_environments"])
+def test_environment_contract_rejects_missing_provenance(monkeypatch, field):
+    identity = _identity()
+    monkeypatch.setattr(
+        environment_contract,
+        "live_environment_identity",
+        lambda: copy.deepcopy(identity),
+    )
+    manifest = copy.deepcopy(identity)
+    del manifest[field]
+    with pytest.raises(EnvironmentContractError, match="lacks"):
+        validate_environment_contract(manifest)
+
+
+@pytest.mark.parametrize("field", ["environment_locks", "python_environments"])
+def test_environment_contract_rejects_live_drift(monkeypatch, field):
+    identity = _identity()
+    observed = copy.deepcopy(identity)
+    if field == "environment_locks":
+        observed[field]["policy_uv_lock_sha256"] = "e" * 64
+    else:
+        observed[field]["policy"]["interpreter_sha256"] = "e" * 64
+    monkeypatch.setattr(
+        environment_contract,
+        "live_environment_identity",
+        lambda: observed,
+    )
+    with pytest.raises(EnvironmentContractError, match="differ"):
+        validate_environment_contract(identity)
+
+
+def test_launchers_revalidate_environment_and_do_not_inherit_pythonpath_or_all():
+    repo = Path(__file__).resolve().parents[2]
+    experiment = repo / "experiments" / "keyframe_oracle_sampling"
+    architecture_script = (experiment / "run_architecture_smoke.sbatch").read_text()
+    smoke_script = (experiment / "run_smoke.sbatch").read_text()
+    architecture_submit = (experiment / "submit_architecture_smoke.py").read_text()
+    smoke_submit = (experiment / "submit_smoke.py").read_text()
+    architecture_gate = (experiment / "architecture_smoke.py").read_text()
+    row_preflight = (experiment / "preflight_smoke_row.py").read_text()
+
+    for script in (architecture_script, smoke_script):
+        assert "${PYTHONPATH" not in script
+    for submitter in (architecture_submit, smoke_submit):
+        assert "--export=ALL" not in submitter
+        assert "--export=KEYFRAME_REPO_ROOT=" in submitter
+        assert "validate_environment_contract(manifest)" in submitter
+    assert "validate_environment_contract(launch_manifest)" in architecture_gate
+    assert "validate_environment_contract(manifest)" in row_preflight

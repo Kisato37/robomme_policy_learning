@@ -39,15 +39,29 @@ SUBGOAL_TYPES = ("simple_subgoal", "grounded_subgoal")
 
 
 
-def pack_buffer(image_buffer, state_buffer, exec_start_idx=0):
+def pack_buffer(
+    image_buffer,
+    state_buffer,
+    exec_start_idx=0,
+    current_task_indices=None,
+):
+    if len(image_buffer) != len(state_buffer):
+        raise ValueError("History images and states must align one-to-one")
     image_output = np.stack(image_buffer, axis=0).astype(np.uint8)[:, None]
     state_output = np.stack(state_buffer, axis=0).astype(np.float32)
-    return {
+    payload = {
         "images": image_output,
         "state": state_output,
         "add_buffer": True,
         "exec_start_idx": exec_start_idx,
     }
+    if current_task_indices is not None:
+        if len(current_task_indices) != len(image_buffer):
+            raise ValueError(
+                "current_task_index metadata must align one-to-one with front history frames"
+            )
+        payload["current_task_index"] = np.asarray(current_task_indices, dtype=np.int64)
+    return payload
     
 def check_args(args):
     assert args.subgoal_type in ["simple_subgoal", "grounded_subgoal", None] and args.obs_horizon == 16
@@ -76,6 +90,7 @@ class EpisodeState:
         self.image_buffer = []
         self.wrist_image_buffer = []
         self.state_buffer = []
+        self.current_task_index_buffer = []
         self.action_plan = collections.deque()
         self.count = 0
         self.exec_start_idx = 0
@@ -84,15 +99,26 @@ class EpisodeState:
         # when clearing the segment buffers.
         self.total_history_frames_sent = 0
 
-    def add_observation(self, img: np.ndarray, wrist_img: np.ndarray, state: np.ndarray):
+    def add_observation(
+        self,
+        img: np.ndarray,
+        wrist_img: np.ndarray,
+        state: np.ndarray,
+        current_task_index: int | None = None,
+    ):
         self.image_buffer.append(img.copy())
         self.wrist_image_buffer.append(wrist_img.copy())
         self.state_buffer.append(state.copy())
+        if current_task_index is not None:
+            self.current_task_index_buffer.append(int(current_task_index))
+        elif self.current_task_index_buffer:
+            raise ValueError("A history segment cannot mix labeled and unlabeled stages")
 
     def clear_buffers(self):
         self.image_buffer.clear()
         self.wrist_image_buffer.clear()
         self.state_buffer.clear()
+        self.current_task_index_buffer.clear()
         self.exec_start_idx = 0
 
     def get_current_obs(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:

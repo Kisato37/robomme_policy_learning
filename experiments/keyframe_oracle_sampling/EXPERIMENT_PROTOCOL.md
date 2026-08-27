@@ -1,10 +1,30 @@
 # Causal Boundary Oracle Test-Time Memory Selection
 
-**Protocol version:** v0.9
-**Status:** complete pre-smoke draft; scientific definitions are frozen unless a
-versioned amendment is made
-**Date:** 2026-08-25
+**Protocol version:** v0.9.1
+**Amendment:** A-001
+**Status:** amended pre-smoke protocol; scientific definitions are frozen unless
+a further versioned amendment is made
+**Date:** 2026-08-27
 **Experiment type:** fixed-checkpoint, test-time-only, four-arm paired evaluation
+
+## Amendment record A-001
+
+This user-approved amendment resolves three pre-smoke ambiguities without
+changing the four arms, task or episode populations, checkpoint, model weights,
+memory budget, outcomes, practical-effect threshold, or preregistered analysis
+replicate counts and seeds:
+
+1. it gives development-smoke RandomSamp a dedicated seed namespace and requires
+   its complete seed set to be disjoint from the unchanged formal seed set;
+2. it defines a short smoke trajectory as ending at the earlier of a valid
+   official terminal state and 64 environment steps; and
+3. it freezes the confidence-interval construction, randomization-test tail and
+   finite-sample correction, secondary raw p-values, and the meaning of
+   “beats.”
+
+The rationale is to prevent smoke/formal RNG reuse, avoid stepping past a valid
+benchmark terminal state, and make the preregistered statistical decisions
+fully reproducible before any scientific result is opened.
 
 ## 1. One-sentence protocol
 
@@ -273,6 +293,9 @@ The RandomSamp seed for a policy call is derived before formal execution from:
 SHA256([2026082501, task_name, episode_id, policy_call_index, "RandomSamp"])
 ```
 
+This is the unchanged **formal** RandomSamp seed formula. Amendment A-001 does
+not alter any formal seed.
+
 Map the first 64 digest bits deterministically into the valid NumPy PCG64 seed
 range. Precompute entries for policy-call indices `0..81`, covering
 `ceil(1300/16)=82` possible calls per trajectory. The complete seed table and its
@@ -386,11 +409,44 @@ audit metric, not a hard gate. Same-live-process repeatability is the hard gate.
 Use the benchmark `validation` split as resolved by the server (expected alias
 `val`), never `test`. Use development episode 0 of every one of the 16 formal
 task types so task-specific stage instrumentation is exercised before the full
-matrix. Run all four arms through at least 64 environment steps. In addition,
-run one preregistered arm per task to a normal terminal state or official timeout;
+matrix. For each of the 64 short trajectories, stop at
+`min(official terminal, 64 environment steps)`: if a valid official success,
+failure, or timeout occurs before step 64, preserve that terminal outcome and
+stop immediately; otherwise the trajectory must execute exactly 64 environment
+steps. A launcher must never suppress, step beyond, reset past, or otherwise
+replace a valid early terminal state merely to reach 64. In addition, run one
+preregistered arm per task to a normal terminal state or official timeout;
 rotate that arm across tasks without looking at outcomes. This smoke therefore
 contains 64 short trajectories plus 16 terminal-path checks, all outside the
 formal split.
+
+An actual benchmark `error` must still be preserved immutably as the scientific
+terminal outcome defined in Section 11.2, including the wrapper error message
+and exception type. It is not retryable infrastructure. However, it is not one
+of the three accepted development-smoke PASS terminals above: its presence
+must make the smoke audit fail closed and require explicit review before any
+new smoke or formal launch. This keeps scientific outcome preservation
+separate from the stricter non-scientific readiness gate.
+
+For development smoke only, derive every RandomSamp policy-call seed from the
+dedicated namespace:
+
+```text
+SHA256([2026082501, "development-smoke-v1", "val", task_name,
+        episode_id, policy_call_index, "RandomSamp"])
+```
+
+Map the first 64 digest bits into the NumPy PCG64 seed range using the same
+deterministic mapping as the formal table. Precompute the complete smoke table
+for policy-call indices `0..81` before launching smoke. The preparation gate must
+construct the complete smoke and formal RandomSamp seed sets and verify their
+intersection is empty; any duplicate within either table or any cross-table
+intersection is a hard stop. Record each table's scope, dataset/split,
+derivation, entries, and SHA-256 in the launch provenance.
+
+The fixed evaluation-policy seed `7` remains intentionally identical across
+arms as a matched control. It is not a RandomSamp selector seed and is therefore
+outside the smoke/formal disjointness requirement above.
 
 The smoke must explicitly include `InsertPeg` to exercise conditioning-video
 history and `PickXtimes` to exercise repeated-stage history. Its purpose is to
@@ -406,7 +462,7 @@ formal tasks, or remove difficult cases based on smoke outcomes.
 After smoke:
 
 - implementation or environment defects may be fixed and re-smoked;
-- clarifying a non-scientific path or command may update v0.9;
+- clarifying a non-scientific path or command may update v0.9.1;
 - changing an arm, boundary definition, split, task/episode set, seed, metric,
   exclusion, or decision rule requires a versioned scientific amendment and a
   complete re-smoke;
@@ -466,12 +522,16 @@ For OC versus U:
 
 1. compute the paired success difference within every task/episode;
 2. compute equal task-weighted success rates and `Delta_primary`;
-3. obtain a paired hierarchical 95% confidence interval by resampling tasks,
-   then paired episodes within each sampled task, using analysis seed
-   `2026082502` and 100,000 bootstrap replicates;
-4. compute a paired randomization p-value by swapping U/OC labels within
-   task/episode blocks under the null, preserving equal task weights, with
-   100,000 fixed-seed permutations;
+3. obtain a paired hierarchical percentile 95% confidence interval by
+   resampling tasks, then paired episodes within each sampled task, using
+   analysis seed `2026082502` and 100,000 bootstrap replicates; define its lower
+   and upper endpoints as the empirical 2.5th and 97.5th percentiles of the
+   bootstrap estimand distribution;
+4. compute a two-sided paired randomization p-value by swapping U/OC labels
+   within task/episode blocks under the null, preserving equal task weights,
+   with 100,000 permutations generated under analysis seed `2026082502`; with
+   observed effect `Delta_obs`, report the finite-sample-corrected value
+   `(1 + count(|Delta_perm| >= |Delta_obs|)) / (100000 + 1)`;
 5. additionally report pooled and per-task discordant counts
    `(OC success, U fail)` and `(OC fail, U success)`;
 6. repeat the primary effect-size analysis after excluding only the entries in
@@ -491,14 +551,26 @@ R  - U
 OC - R
 ```
 
-Report unadjusted estimates and Holm-adjusted p-values across these four
-secondary comparisons. They are mechanistic, not additional confirmatory claims.
+For each comparison, use the same 100,000-replicate hierarchical percentile
+bootstrap, empirical 2.5th/97.5th percentile interval, and two-sided paired
+randomization test with analysis seed `2026082502`, 100,000 permutations, and
+the same `+1` finite-sample correction as the confirmatory comparison. The four
+resulting two-sided randomization p-values are the raw secondary p-values; apply
+Holm's step-down adjustment jointly across exactly these four values. Report
+unadjusted estimates, percentile confidence intervals, raw p-values, and
+Holm-adjusted p-values. They are mechanistic, not additional confirmatory claims.
 Progress and step-count analyses are secondary and must not overrule final
 success.
 
 ### 12.3 Interpretation and decision rule
 
 The practical-effect threshold is 3.0 macro percentage points.
+
+Throughout the decision rules below, “A beats B” means that the lower endpoint
+of the relevant paired hierarchical percentile 95% confidence interval for
+`A - B` is strictly greater than zero. A positive point estimate alone does not
+count as “beats.” This definition does not replace the separately preregistered
+`+3.0 pp` practical-effect requirement where that threshold is stated.
 
 - **Semantic-selection GO:** `OC - U >= 3.0 pp`, the paired 95% CI lower bound is
   above zero, and OC also beats R with a 95% CI lower bound above zero.
@@ -658,7 +730,7 @@ The smoke handoff must contain:
 - policy reset and cross-arm isolation evidence;
 - selector and policy latency summary;
 - output/resume/immutability audit;
-- known limitations and any v0.9-to-v1.0 changes;
+- known limitations and any v0.9.1-to-v1.0 changes;
 - estimated formal trajectory count, policy-call count, wall time, and Slurm
   resources;
 - an explicit statement that formal execution has not started.

@@ -27,6 +27,12 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
     def get_server_metadata(self) -> Dict:
         return self._server_metadata
 
+    @staticmethod
+    def _unpack_response(response, operation: str) -> Dict:
+        if isinstance(response, str):
+            raise RuntimeError(f"Error in inference server during {operation}:\n{response}")
+        return msgpack_numpy.unpackb(response)
+
     def _wait_for_server(self) -> Tuple[websockets.sync.client.ClientConnection, Dict]:
         logging.info(f"Waiting for server at {self._uri}...")
         while True:
@@ -36,7 +42,7 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
                     self._uri, compression=None, max_size=None, additional_headers=headers, 
                     ping_timeout=600, open_timeout=60, close_timeout=60
                 )
-                metadata = msgpack_numpy.unpackb(conn.recv())
+                metadata = self._unpack_response(conn.recv(), "server handshake")
                 return conn, metadata
             except ConnectionRefusedError:
                 logging.info("Still waiting for server...")
@@ -47,10 +53,7 @@ class WebsocketClientPolicy(_base_policy.BasePolicy):
         data = self._packer.pack(obs)
         self._ws.send(data)
         response = self._ws.recv()
-        if isinstance(response, str):
-            # we're expecting bytes; if the server sends a string, it's an error.
-            raise RuntimeError(f"Error in inference server:\n{response}")
-        return msgpack_numpy.unpackb(response)
+        return self._unpack_response(response, "inference")
 
     @override
     def reset(self) -> None:
@@ -63,19 +66,19 @@ class MMEVLAWebsocketClientPolicy(WebsocketClientPolicy):
         data = self._packer.pack(obs)
         self._ws.send(data)
         response = self._ws.recv()
-        if isinstance(response, str):
-            # we're expecting bytes; if the server sends a string, it's an error.
-            raise RuntimeError(f"Error in inference server:\n{response}")
-        return msgpack_numpy.unpackb(response)
+        return self._unpack_response(response, "inference")
     
-    def reset(self) -> None:
-        data = self._packer.pack({"reset": True})
+    def reset(self, keyframe_selector_config: Dict | None = None) -> Dict:
+        payload = {"reset": True}
+        if keyframe_selector_config is not None:
+            payload["keyframe_selector_config"] = keyframe_selector_config
+        data = self._packer.pack(payload)
         self._ws.send(data)
         response = self._ws.recv()
-        return msgpack_numpy.unpackb(response)
+        return self._unpack_response(response, "reset")
     
     def add_buffer(self, buffer: Dict):
         data = self._packer.pack(buffer)
         self._ws.send(data)
         response = self._ws.recv()
-        return msgpack_numpy.unpackb(response)
+        return self._unpack_response(response, "add_buffer")

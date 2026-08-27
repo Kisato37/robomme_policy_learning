@@ -3,15 +3,18 @@ import jax.numpy as jnp
 import einops
 import math
 import heapq
+from contextlib import contextmanager
 from copy import deepcopy
 import numpy as np
 from typing import Callable
 import cv2
+import time
 from collections import defaultdict
 
 
 from openpi.shared import image_tools
 from mme_vla_suite.shared.data_utils import *
+from mme_vla_suite.shared.keyframe_oracle_sampling import validate_selector_output
 
 
 def create_dict(indices):
@@ -50,6 +53,12 @@ class MemoryBuffer:
         self.compute_token_drop_score = compute_token_drop_score
         
         self._history_feats = {}
+        # Privileged experiment metadata is deliberately kept outside feature
+        # dictionaries so no model gather path can consume it accidentally.
+        self._history_metadata = {}
+        self._frame_sampling_selector = None
+        self._last_frame_sampling_indices = None
+        self._last_frame_sampling_selector_latency_ms = None
         
         
         if prepare_buffer:
@@ -79,11 +88,17 @@ class MemoryBuffer:
         images, #: (t v h w 3), np.int8
         states, #: (t d), np.float32
         step_idx_list: list[int],
+        stage_indices=None,
     ):
         assert self.vision_enc is not None, "encode is not initialized"
         
         t, v, _, _, _ = images.shape
         assert v == self.num_views
+        if len(step_idx_list) != t or len(states) != t:
+            raise ValueError("Images, states, and history indices must align one-to-one")
+        pending_metadata = None
+        if stage_indices is not None:
+            pending_metadata = self._validated_stage_metadata(stage_indices, step_idx_list)
         
         image_jnp = jnp.array(
             images.astype(np.float32) / 255.0 * 2.0 - 1.0
@@ -124,6 +139,8 @@ class MemoryBuffer:
             
             if self.compute_token_drop_score:
                 self._process_token_drop_score(step_idx)    
+        if pending_metadata is not None:
+            self._history_metadata.update(pending_metadata)
             
     
     def get_history_feats(self, step_idx: int, remove_image_pixels: bool = True):
@@ -176,6 +193,59 @@ class MemoryBuffer:
         self.scored_token_heap.clear()
         self.token_drop_last_frame = -1
         self._history_feats.clear()
+        self._history_metadata.clear()
+        self._frame_sampling_selector = None
+        self._last_frame_sampling_indices = None
+        self._last_frame_sampling_selector_latency_ms = None
+
+    def _validated_stage_metadata(self, stage_indices, step_idx_list):
+        if len(stage_indices) != len(step_idx_list):
+            raise ValueError(
+                "current_task_index metadata must align one-to-one with every front history frame"
+            )
+        pending = {}
+        for step_idx, stage in zip(step_idx_list, stage_indices, strict=True):
+            if isinstance(step_idx, (bool, np.bool_)) or not isinstance(step_idx, (int, np.integer)):
+                raise TypeError(f"History frame index must be an integer, got {step_idx!r}")
+            step_idx = int(step_idx)
+            if isinstance(stage, (bool, np.bool_)) or not isinstance(stage, (int, np.integer)):
+                raise TypeError(f"current_task_index must be an integer, got {stage!r}")
+            if step_idx in self._history_metadata or step_idx in pending:
+                raise ValueError(f"History metadata already exists for frame {step_idx}")
+            if step_idx == 0:
+                boundary = True
+            else:
+                previous = pending.get(step_idx - 1, self._history_metadata.get(step_idx - 1))
+                if previous is None:
+                    raise ValueError(
+                        f"Cannot derive causal boundary for frame {step_idx} without frame {step_idx - 1}"
+                    )
+                boundary = int(stage) != int(previous["stage"])
+            pending[step_idx] = {"stage": int(stage), "boundary": bool(boundary)}
+        return pending
+
+    def get_boundary_indices(self, step_idx):
+        missing = [idx for idx in range(step_idx + 1) if idx not in self._history_metadata]
+        if missing:
+            raise ValueError(
+                "Missing live current_task_index metadata for causal history frames: "
+                f"{missing[:8]}{'...' if len(missing) > 8 else ''}"
+            )
+        return [
+            idx
+            for idx in range(step_idx + 1)
+            if self._history_metadata[idx]["boundary"]
+        ]
+
+    @contextmanager
+    def temporary_frame_sampling_selector(self, selector):
+        """Install an override for one preparation call and always restore it."""
+        previous = self._frame_sampling_selector
+        self._frame_sampling_selector = selector
+        try:
+            yield
+        finally:
+            self._frame_sampling_selector = previous
         
         
     def get_token_dropping_indices(self):
@@ -313,7 +383,25 @@ class MemoryBuffer:
             
     
     def prepare_frame_sampling(self, step_idx, token_budget, token_per_image, history_feats_gather_fn,  *args, **kwargs):
-        indices_to_load = self.get_frame_sampling_indices(step_idx, token_budget, token_per_image)
+        selector_started = time.monotonic()
+        if self._frame_sampling_selector is None:
+            # Arm U must stay on this literal released call.  Do not route it
+            # through the experiment's pure expected-behavior helper.
+            indices_to_load = self.get_frame_sampling_indices(step_idx, token_budget, token_per_image)
+        else:
+            indices_to_load = self._frame_sampling_selector(
+                step_idx, token_budget, token_per_image
+            )
+        max_size = token_budget // (token_per_image * self.num_views)
+        indices_to_load = validate_selector_output(
+            indices_to_load, step_idx, max_frames=max_size
+        )
+        self._last_frame_sampling_indices = list(indices_to_load)
+        # Selector decision latency includes its validation and index-recording
+        # bookkeeping, but deliberately excludes feature gathering and padding.
+        self._last_frame_sampling_selector_latency_ms = (
+            time.monotonic() - selector_started
+        ) * 1000
         # print("step_idx: ", step_idx, "indices_to_load: ", indices_to_load, "length: ", len(indices_to_load))
         # self._visualize_frame_sampling(indices_to_load, step_idx)
         history_feats = history_feats_gather_fn(indices_to_load, *args, **kwargs)

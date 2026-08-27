@@ -59,6 +59,9 @@ class WebsocketPolicyServer:
                 if obs.get("reset", False):
                     tstart = time.monotonic()
                     self._policy.reset()
+                    selector_config = obs.get("keyframe_selector_config")
+                    if selector_config is not None:
+                        self._policy.configure_keyframe_selector(selector_config)
                     tend = time.monotonic() - tstart
                     await websocket.send(packer.pack(
                         {"reset_finished": True, "reset_time_ms": tend * 1000}))

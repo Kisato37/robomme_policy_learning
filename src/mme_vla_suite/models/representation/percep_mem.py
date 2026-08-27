@@ -1,6 +1,9 @@
 import flax.nnx as nnx
 import jax.numpy as jnp
 
+# Runtime array-shape annotations intentionally use jaxtyping-style dimensions.
+# ruff: noqa: F722
+
 
 import openpi.shared.array_typing as at
 from mme_vla_suite.models.representation.mem_encoder import FeatureEncoder
@@ -27,16 +30,32 @@ class PerceptualMemory(nnx.Module):
             use_state_emb=self.config.use_state_emb,
         )
 
+    def encode_tokens(
+        self,
+        static_image_emb: at.Float[at.Array, "b l d1"],
+        static_pos_emb: at.Float[at.Array, "b l d2"],
+        static_state_emb: at.Float[at.Array, "b l d3"],
+    ) -> at.Float[at.Array, "b l d"]:
+        """Return the final perceptual-memory tokens consumed by integration.
+
+        Keeping this operation named and side-effect free lets inference audit the
+        true feature-encoder output without changing the tensor passed to the
+        Modulator in the scientific forward pass.
+        """
+        assert static_image_emb.shape[1] == self.config.budget
+        return self.feature_encoder.encode_perceptual_memory(
+            static_image_emb, static_pos_emb, static_state_emb
+        )
+
     def __call__(
         self,
         static_image_emb: at.Float[at.Array, "b l d1"],
         static_pos_emb: at.Float[at.Array, "b l d2"],
         static_state_emb: at.Float[at.Array, "b l d3"],
     ):
-        # get memory tokens using feature encoder
-        assert static_image_emb.shape[1] == self.config.budget
-
-        hidden_states = self.feature_encoder.encode_perceptual_memory(
+        # get memory tokens using the exact same feature-encoder path exposed to
+        # the inference audit above.
+        hidden_states = self.encode_tokens(
             static_image_emb, static_pos_emb, static_state_emb
         )
 

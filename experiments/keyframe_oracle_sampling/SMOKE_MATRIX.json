@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "dataset": "val",
+  "episode_id": 0,
+  "short_max_steps": 64,
+  "terminal_max_steps": 1300,
+  "tasks": [
+    {"task": "BinFill", "terminal_arm": "U"},
+    {"task": "StopCube", "terminal_arm": "O"},
+    {"task": "PickXtimes", "terminal_arm": "OC"},
+    {"task": "SwingXtimes", "terminal_arm": "R"},
+    {"task": "ButtonUnmask", "terminal_arm": "U"},
+    {"task": "VideoUnmask", "terminal_arm": "O"},
+    {"task": "VideoUnmaskSwap", "terminal_arm": "OC"},
+    {"task": "ButtonUnmaskSwap", "terminal_arm": "R"},
+    {"task": "PickHighlight", "terminal_arm": "U"},
+    {"task": "VideoRepick", "terminal_arm": "O"},
+    {"task": "VideoPlaceButton", "terminal_arm": "OC"},
+    {"task": "VideoPlaceOrder", "terminal_arm": "R"},
+    {"task": "MoveCube", "terminal_arm": "U"},
+    {"task": "InsertPeg", "terminal_arm": "O"},
+    {"task": "PatternLock", "terminal_arm": "OC"},
+    {"task": "RouteStick", "terminal_arm": "R"}
+  ]
+}
