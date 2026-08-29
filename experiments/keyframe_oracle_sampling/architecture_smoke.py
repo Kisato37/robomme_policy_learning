@@ -98,8 +98,15 @@ def _sha256_file(path: Path) -> str:
 
 
 def _array_digest(value: Any) -> str:
+    import jax
     import numpy as np
 
+    value_dtype = getattr(value, "dtype", None)
+    if value_dtype is not None and jax.dtypes.issubdtype(
+        value_dtype, jax.dtypes.prng_key
+    ):
+        # Typed PRNG keys intentionally reject direct NumPy conversion.
+        value = jax.random.key_data(value)
     array = np.asarray(value)
     digest = hashlib.sha256()
     digest.update(str(array.dtype).encode("ascii"))

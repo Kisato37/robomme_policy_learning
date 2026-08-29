@@ -11,6 +11,7 @@ import pytest
 from experiments.keyframe_oracle_sampling.artifacts import ALL_ARMS, FORMAL_TASKS
 from experiments.keyframe_oracle_sampling.architecture_smoke import (
     _action_contract_checks,
+    _array_digest,
 )
 from experiments.keyframe_oracle_sampling.prepare_smoke import (
     BENCHMARK_UV_LOCK,
@@ -66,6 +67,16 @@ def test_architecture_smoke_checks_absolute_action_contract():
     nonfinite = np.zeros((20, 8), dtype=np.float32)
     nonfinite[0, 0] = np.nan
     assert _action_contract_checks(nonfinite)["action_values_are_finite"] is False
+
+
+def test_architecture_smoke_digests_typed_prng_keys_via_raw_key_data():
+    import jax
+
+    typed_key = jax.random.key(7)
+    raw_key_data = jax.random.key_data(typed_key)
+
+    assert _array_digest(typed_key) == _array_digest(raw_key_data)
+    assert _array_digest(typed_key) != _array_digest(jax.random.key(8))
 
 
 def test_policy_python_provenance_records_actual_virtual_environment():
