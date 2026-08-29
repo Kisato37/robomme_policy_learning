@@ -58,23 +58,49 @@ if [[ "${1:-}" == "--dry-run" ]]; then
   exit 0
 fi
 
-RUN_ROOT="${1:?usage: run_formal.sbatch RUN_ROOT SEED_TABLE [ATTEMPT_ID]}"
-SEED_TABLE="${2:?usage: run_formal.sbatch RUN_ROOT SEED_TABLE [ATTEMPT_ID]}"
+RUN_ROOT="${1:?usage: run_formal.sbatch RUN_ROOT SEED_TABLE ATTEMPT_ID SHARD_ID}"
+SEED_TABLE="${2:?usage: run_formal.sbatch RUN_ROOT SEED_TABLE ATTEMPT_ID SHARD_ID}"
 ATTEMPT_ID="${3:-0}"
+SHARD_ID="${4:?usage: run_formal.sbatch RUN_ROOT SEED_TABLE ATTEMPT_ID SHARD_ID}"
 if [[ ! "${ATTEMPT_ID}" =~ ^[012]$ ]]; then
   echo "ATTEMPT_ID must be 0, 1, or 2" >&2
   exit 1
 fi
-ROW_ID="${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}"
+if [[ ! "${SHARD_ID}" =~ ^[0-9]+$ ]]; then
+  echo "SHARD_ID must be a non-negative integer" >&2
+  exit 1
+fi
+LOCAL_ARRAY_TASK_ID="${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}"
+ATTEMPT_PADDED="$(printf '%02d' "${ATTEMPT_ID}")"
+if [[ "${ATTEMPT_ID}" == 0 ]]; then
+  SUBMISSION_RECORD="${RUN_ROOT}/protocol/submission_record_shard_$(printf '%02d' "${SHARD_ID}").json"
+else
+  SUBMISSION_RECORD="${RUN_ROOT}/protocol/submission_record_attempt_${ATTEMPT_PADDED}_shard_$(printf '%02d' "${SHARD_ID}").json"
+fi
+for _ in $(seq 1 30); do
+  [[ -f "${SUBMISSION_RECORD}" ]] && break
+  sleep 1
+done
+if [[ ! -f "${SUBMISSION_RECORD}" ]]; then
+  echo "Missing write-once formal submission record" >&2
+  exit 1
+fi
+FORMAL_AUTHORIZATION="$("${POLICY_PYTHON}" -c \
+  'import sys; from experiments.keyframe_oracle_sampling.artifacts import sha256_file; print(sha256_file(sys.argv[1]))' \
+  "${SUBMISSION_RECORD}")"
 ROW_TSV="$("${POLICY_PYTHON}" -m experiments.keyframe_oracle_sampling.formal_matrix \
-  --row "${ROW_ID}" --row-tsv)"
-IFS=$'\t' read -r TASK EPISODE_ID ARM TRAJECTORY_KIND MAX_STEPS DATASET <<<"${ROW_TSV}"
+  --run-root "${RUN_ROOT}" \
+  --attempt-id "${ATTEMPT_ID}" \
+  --shard-id "${SHARD_ID}" \
+  --array-task-id "${LOCAL_ARRAY_TASK_ID}" \
+  --submission-row-tsv)"
+IFS=$'\t' read -r ROW_ID TASK EPISODE_ID ARM TRAJECTORY_KIND MAX_STEPS DATASET <<<"${ROW_TSV}"
+export KEYFRAME_FORMAL_ROW_ID="${ROW_ID}"
 GPU_BINDING_TSV="$(resolve_allocated_gpus "${CUDA_VISIBLE_DEVICES:-}")"
 IFS=$'\t' read -r POLICY_CUDA_DEVICE SIMULATOR_CUDA_DEVICE <<<"${GPU_BINDING_TSV}"
 echo "GPU binding: allocated=${CUDA_VISIBLE_DEVICES}; policy=${POLICY_CUDA_DEVICE}; simulator=${SIMULATOR_CUDA_DEVICE}"
 
 EPISODE_PADDED="$(printf '%02d' "${EPISODE_ID}")"
-ATTEMPT_PADDED="$(printf '%02d' "${ATTEMPT_ID}")"
 ATTEMPT_ROOT="${RUN_ROOT}/trajectories/${TASK}/episode_${EPISODE_PADDED}/${ARM}/attempt_${ATTEMPT_PADDED}"
 if [[ -e "${ATTEMPT_ROOT}" ]]; then
   echo "Refusing to reuse existing formal attempt directory: ${ATTEMPT_ROOT}" >&2
@@ -96,23 +122,6 @@ from experiments.keyframe_oracle_sampling.prepare_smoke import checkpoint_identi
 
 checkpoint_identity(Path(sys.argv[1]))
 PY
-
-if [[ "${ATTEMPT_ID}" == 0 ]]; then
-  SUBMISSION_RECORD="${RUN_ROOT}/protocol/submission_record.json"
-else
-  SUBMISSION_RECORD="${RUN_ROOT}/protocol/submission_record_attempt_${ATTEMPT_PADDED}.json"
-fi
-for _ in $(seq 1 30); do
-  [[ -f "${SUBMISSION_RECORD}" ]] && break
-  sleep 1
-done
-if [[ ! -f "${SUBMISSION_RECORD}" ]]; then
-  echo "Missing write-once formal submission record" >&2
-  exit 1
-fi
-FORMAL_AUTHORIZATION="$("${POLICY_PYTHON}" -c \
-  'import sys; from experiments.keyframe_oracle_sampling.artifacts import sha256_file; print(sha256_file(sys.argv[1]))' \
-  "${SUBMISSION_RECORD}")"
 
 "${POLICY_PYTHON}" -m experiments.keyframe_oracle_sampling.preflight_formal_row \
   --run-root "${RUN_ROOT}" \

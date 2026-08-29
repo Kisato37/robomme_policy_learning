@@ -62,6 +62,62 @@ def load_formal_matrix(path: str | Path) -> dict[str, Any]:
     return payload
 
 
+def _mapped_submission_row_id(submission: dict[str, Any], array_task_id: int) -> int:
+    raw_array_task_ids = submission.get("array_task_ids")
+    raw_row_ids = submission.get("row_ids")
+    for field, values in (("array_task_ids", raw_array_task_ids), ("row_ids", raw_row_ids)):
+        if not isinstance(values, list) or any(
+            isinstance(value, bool) or not isinstance(value, int) for value in values
+        ):
+            raise ArtifactContractError(f"Formal submission {field} must be an integer list")
+        if len(values) != len(set(values)):
+            raise ArtifactContractError(f"Formal submission {field} contains duplicates")
+    if len(raw_array_task_ids) != len(raw_row_ids):
+        raise ArtifactContractError("Formal submission array-task/row mapping has different lengths")
+    if int(submission.get("trajectory_count", -1)) != len(raw_row_ids):
+        raise ArtifactContractError("Formal submission trajectory_count/row mapping mismatch")
+    try:
+        mapping_index = raw_array_task_ids.index(array_task_id)
+    except ValueError as exc:
+        raise ArtifactContractError(
+            f"SLURM_ARRAY_TASK_ID {array_task_id} is not authorized by the formal submission"
+        ) from exc
+    return raw_row_ids[mapping_index]
+
+
+def load_formal_submission_row(
+    run_root: str | Path,
+    *,
+    attempt_id: int,
+    shard_id: int,
+    array_task_id: int,
+    environ: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Map a shard-local Slurm task ID to its frozen global matrix row."""
+    run_root = Path(run_root).resolve()
+    environ = dict(os.environ if environ is None else environ)
+    submission_name = (
+        f"submission_record_shard_{shard_id:02d}.json"
+        if attempt_id == 0
+        else f"submission_record_attempt_{attempt_id:02d}_shard_{shard_id:02d}.json"
+    )
+    submission_path = run_root / "protocol" / submission_name
+    if not submission_path.is_file():
+        raise ArtifactContractError(f"Formal shard submission is missing: {submission_path}")
+    submission = json.loads(submission_path.read_text())
+    if int(submission.get("attempt_id", -1)) != attempt_id:
+        raise ArtifactContractError("Runtime attempt ID differs from formal submission")
+    if int(submission.get("shard_id", -1)) != shard_id:
+        raise ArtifactContractError("Runtime shard ID differs from formal submission")
+    if submission.get("slurm_array_job_id") != environ.get("SLURM_ARRAY_JOB_ID"):
+        raise ArtifactContractError("Runtime Slurm array differs from formal shard submission")
+    row_id = _mapped_submission_row_id(submission, array_task_id)
+    rows = load_formal_matrix(run_root / "protocol" / "formal_matrix.json")["rows"]
+    if row_id < 0 or row_id >= len(rows):
+        raise ArtifactContractError(f"Formal row {row_id} outside 0..{len(rows) - 1}")
+    return rows[row_id]
+
+
 def validate_formal_runtime_row_binding(
     run_root: str | Path,
     *,
@@ -85,35 +141,34 @@ def validate_formal_runtime_row_binding(
     if row_id < 0 or row_id >= len(rows):
         raise ArtifactContractError(f"Formal row {row_id} outside 0..{len(rows) - 1}")
 
-    submission_name = (
-        "submission_record.json" if attempt_id == 0 else f"submission_record_attempt_{attempt_id:02d}.json"
+    submission_pattern = (
+        "submission_record_shard_*.json"
+        if attempt_id == 0
+        else f"submission_record_attempt_{attempt_id:02d}_shard_*.json"
     )
-    submission_path = run_root / "protocol" / submission_name
-    if not submission_path.is_file():
-        raise ArtifactContractError(f"Formal submission is missing: {submission_path}")
-    submission = json.loads(submission_path.read_text())
+    active_array_job = environ.get("SLURM_ARRAY_JOB_ID")
+    matching_submissions = []
+    for submission_path in sorted((run_root / "protocol").glob(submission_pattern)):
+        submission = json.loads(submission_path.read_text())
+        if submission.get("slurm_array_job_id") == active_array_job:
+            matching_submissions.append(submission)
+    if len(matching_submissions) != 1:
+        raise ArtifactContractError("Runtime Slurm array does not match exactly one formal shard submission")
+    submission = matching_submissions[0]
     if int(submission.get("attempt_id", -1)) != attempt_id:
         raise ArtifactContractError("Runtime attempt ID differs from formal submission")
 
     active_array_task = environ.get("SLURM_ARRAY_TASK_ID")
     try:
-        active_row_id = int(active_array_task) if active_array_task is not None else -1
+        array_task_id = int(active_array_task) if active_array_task is not None else -1
     except ValueError as exc:
         raise ArtifactContractError("SLURM_ARRAY_TASK_ID is not an integer") from exc
-    if active_row_id != row_id:
-        raise ArtifactContractError(f"Runtime row {row_id} differs from SLURM_ARRAY_TASK_ID {active_array_task!r}")
-    if submission.get("slurm_array_job_id") != environ.get("SLURM_ARRAY_JOB_ID"):
-        raise ArtifactContractError("Runtime Slurm array differs from formal submission")
-
-    raw_row_ids = submission.get("row_ids")
-    if not isinstance(raw_row_ids, list) or any(
-        isinstance(value, bool) or not isinstance(value, int) for value in raw_row_ids
-    ):
-        raise ArtifactContractError("Formal submission row_ids must be an integer list")
-    if len(raw_row_ids) != len(set(raw_row_ids)):
-        raise ArtifactContractError("Formal submission row_ids contain duplicates")
-    if row_id not in raw_row_ids:
-        raise ArtifactContractError(f"Formal submission does not authorize row {row_id}")
+    mapped_row_id = _mapped_submission_row_id(submission, array_task_id)
+    if mapped_row_id != row_id:
+        raise ArtifactContractError(
+            f"Runtime formal row {row_id} differs from the recorded mapping for "
+            f"SLURM_ARRAY_TASK_ID {active_array_task!r}"
+        )
 
     expected = rows[row_id]
     runtime = {
@@ -141,9 +196,41 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--row", type=int)
     parser.add_argument("--row-tsv", action="store_true")
+    parser.add_argument("--run-root", type=Path)
+    parser.add_argument("--attempt-id", type=int)
+    parser.add_argument("--shard-id", type=int)
+    parser.add_argument("--array-task-id", type=int)
+    parser.add_argument("--submission-row-tsv", action="store_true")
     args = parser.parse_args()
     payload = build_formal_matrix()
     rows = payload["rows"]
+    if args.submission_row_tsv:
+        required = (args.run_root, args.attempt_id, args.shard_id, args.array_task_id)
+        if any(value is None for value in required):
+            parser.error(
+                "--submission-row-tsv requires --run-root, --attempt-id, --shard-id, and --array-task-id"
+            )
+        row = load_formal_submission_row(
+            args.run_root,
+            attempt_id=args.attempt_id,
+            shard_id=args.shard_id,
+            array_task_id=args.array_task_id,
+        )
+        print(
+            "\t".join(
+                str(row[key])
+                for key in (
+                    "row_id",
+                    "task",
+                    "episode_id",
+                    "arm",
+                    "trajectory_kind",
+                    "max_steps",
+                    "dataset",
+                )
+            )
+        )
+        return
     if args.row is None:
         print(json.dumps(payload, indent=2))
         return

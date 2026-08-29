@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import json
 import os
 from pathlib import Path
@@ -31,11 +32,34 @@ ACCEPTED_DEVELOPMENT_SMOKE_COMMIT = "899912b11a379346b4c8f4d6c80f54f07c118ea3"
 ACCEPTED_DEVELOPMENT_SMOKE_AUDIT_SHA256 = "fc1b7c95d0c4b7d7e5353e31a27f31dbef80a6e26c1872b6e5fba6f768d9729e"
 
 
-def submission_path(run_root: str | Path, attempt_id: int) -> Path:
+def submission_plan_path(run_root: str | Path, attempt_id: int) -> Path:
     if attempt_id not in {0, 1, 2}:
         raise ValueError("attempt_id must be 0, 1, or 2")
-    name = "submission_record.json" if attempt_id == 0 else f"submission_record_attempt_{attempt_id:02d}.json"
+    name = "submission_plan.json" if attempt_id == 0 else f"submission_plan_attempt_{attempt_id:02d}.json"
     return Path(run_root) / "protocol" / name
+
+
+def submission_path(run_root: str | Path, attempt_id: int, shard_id: int) -> Path:
+    if attempt_id not in {0, 1, 2}:
+        raise ValueError("attempt_id must be 0, 1, or 2")
+    if shard_id < 0:
+        raise ValueError("shard_id must be non-negative")
+    name = (
+        f"submission_record_shard_{shard_id:02d}.json"
+        if attempt_id == 0
+        else f"submission_record_attempt_{attempt_id:02d}_shard_{shard_id:02d}.json"
+    )
+    return Path(run_root) / "protocol" / name
+
+
+def submission_paths(run_root: str | Path, attempt_id: int) -> list[Path]:
+    protocol_dir = Path(run_root) / "protocol"
+    pattern = (
+        "submission_record_shard_*.json"
+        if attempt_id == 0
+        else f"submission_record_attempt_{attempt_id:02d}_shard_*.json"
+    )
+    return sorted(protocol_dir.glob(pattern))
 
 
 def _require_exact_development_smoke(audit: dict[str, Any], audit_path: Path) -> None:
@@ -242,12 +266,12 @@ def validate_prepared_formal_root(
     """Reject direct formal execution outside its exact recorded Slurm array."""
     manifest = validate_formal_prepared_root(run_root, seed_table_path, repo_root)
     run_root = Path(run_root).resolve()
-    record_path = submission_path(run_root, attempt_id)
-    if not record_path.is_file():
-        raise ArtifactContractError(f"Formal submission record is missing: {record_path}")
-    observed_digest = sha256_file(record_path)
-    if authorization_digest != observed_digest:
-        raise ArtifactContractError("Formal authorization digest does not match the recorded submission")
+    matching_paths = [
+        path for path in submission_paths(run_root, attempt_id) if sha256_file(path) == authorization_digest
+    ]
+    if len(matching_paths) != 1:
+        raise ArtifactContractError("Formal authorization digest does not match exactly one recorded shard")
+    record_path = matching_paths[0]
     submission = json.loads(record_path.read_text())
     commit = str(manifest["repository"]["commit_sha"])
     if submission.get("repository_commit_sha") != commit:
@@ -261,6 +285,63 @@ def validate_prepared_formal_root(
     if submission.get("formal_matrix_sha256") != manifest.get("formal_matrix_sha256"):
         raise ArtifactContractError("Formal submission used a different matrix")
 
+    plan_path = submission_plan_path(run_root, attempt_id)
+    if not plan_path.is_file():
+        raise ArtifactContractError(f"Formal submission plan is missing: {plan_path}")
+    if submission.get("submission_plan_sha256") != sha256_file(plan_path):
+        raise ArtifactContractError("Formal submission plan changed after shard submission")
+    plan = json.loads(plan_path.read_text())
+    if int(plan.get("attempt_id", -1)) != attempt_id:
+        raise ArtifactContractError("Formal submission plan attempt ID mismatch")
+    planned_shards = plan.get("shards")
+    if not isinstance(planned_shards, list):
+        raise ArtifactContractError("Formal submission plan shards must be a list")
+    if int(plan.get("shard_count", -1)) != len(planned_shards):
+        raise ArtifactContractError("Formal submission plan top-level shard_count mismatch")
+    if int(plan.get("max_rows_per_array", -1)) != 1000:
+        raise ArtifactContractError("Formal submission plan has the wrong per-array row limit")
+    shard_id = submission.get("shard_id")
+    matching_plans = [
+        shard for shard in planned_shards if isinstance(shard, Mapping) and shard.get("shard_id") == shard_id
+    ]
+    if len(matching_plans) != 1:
+        raise ArtifactContractError("Formal shard is absent or duplicated in its plan")
+    planned = matching_plans[0]
+    for field in ("shard_count", "array_task_ids", "row_ids", "array", "command"):
+        if submission.get(field) != planned.get(field):
+            raise ArtifactContractError(f"Formal shard differs from its plan on {field}")
+    all_planned_rows: list[int] = []
+    planned_shard_ids: list[int] = []
+    for shard in planned_shards:
+        if not isinstance(shard, Mapping):
+            raise ArtifactContractError("Formal submission plan contains an invalid shard")
+        shard_id_value = shard.get("shard_id")
+        shard_rows = shard.get("row_ids")
+        array_task_ids = shard.get("array_task_ids")
+        if isinstance(shard_id_value, bool) or not isinstance(shard_id_value, int):
+            raise ArtifactContractError("Formal submission plan has a non-integer shard ID")
+        if not isinstance(shard_rows, list) or any(
+            isinstance(row_id, bool) or not isinstance(row_id, int) for row_id in shard_rows
+        ):
+            raise ArtifactContractError("Formal submission plan row_ids must be integer lists")
+        if array_task_ids != list(range(len(shard_rows))):
+            raise ArtifactContractError("Formal shard must map local array tasks 0..N-1 in row order")
+        shard_rows = shard["row_ids"]
+        if len(shard_rows) > 1000:
+            raise ArtifactContractError("Formal submission shard exceeds 1,000 rows")
+        if int(shard.get("shard_count", -1)) != len(planned_shards):
+            raise ArtifactContractError("Formal submission plan shard_count mismatch")
+        planned_shard_ids.append(shard_id_value)
+        all_planned_rows.extend(shard_rows)
+    if sorted(planned_shard_ids) != list(range(len(planned_shards))):
+        raise ArtifactContractError("Formal submission plan shard IDs must be exactly 0..N-1")
+    if len(all_planned_rows) != len(set(all_planned_rows)):
+        raise ArtifactContractError("Formal submission plan assigns a row more than once")
+    if int(plan.get("trajectory_count", -1)) != len(all_planned_rows):
+        raise ArtifactContractError("Formal submission plan trajectory count mismatch")
+    if attempt_id == 0 and sorted(all_planned_rows) != list(range(FORMAL_TRAJECTORY_COUNT)):
+        raise ArtifactContractError("Initial formal plan is not the exact 3,200-row matrix")
+
     active_array_job = os.environ.get("SLURM_ARRAY_JOB_ID")
     if not active_array_job or submission.get("slurm_array_job_id") != active_array_job:
         raise ArtifactContractError("Formal evaluator is not running inside the recorded Slurm array")
@@ -269,15 +350,14 @@ def validate_prepared_formal_root(
         active_row_id = int(active_array_task) if active_array_task is not None else -1
     except ValueError as exc:
         raise ArtifactContractError("SLURM_ARRAY_TASK_ID is not an integer") from exc
-    raw_row_ids = submission.get("row_ids")
-    if not isinstance(raw_row_ids, list) or any(
-        isinstance(row_id, bool) or not isinstance(row_id, int) for row_id in raw_row_ids
-    ):
-        raise ArtifactContractError("Formal submission row_ids must be an integer list")
-    if len(raw_row_ids) != len(set(raw_row_ids)):
-        raise ArtifactContractError("Formal submission row_ids contain duplicates")
-    if int(submission.get("trajectory_count", -1)) != len(raw_row_ids):
-        raise ArtifactContractError("Formal submission trajectory_count/row_ids mismatch")
-    if active_row_id not in raw_row_ids:
+    trajectory_count = submission.get("trajectory_count")
+    if isinstance(trajectory_count, bool) or not isinstance(trajectory_count, int):
+        raise ArtifactContractError("Formal submission trajectory_count must be an integer")
+    if trajectory_count != len(planned.get("row_ids", [])):
+        raise ArtifactContractError("Formal submission trajectory_count/row mapping mismatch")
+    raw_array_task_ids = submission.get("array_task_ids")
+    if raw_array_task_ids != list(range(trajectory_count)):
+        raise ArtifactContractError("Formal submission has an invalid local array-task mapping")
+    if active_row_id not in raw_array_task_ids:
         raise ArtifactContractError("Current SLURM_ARRAY_TASK_ID is not authorized by the formal submission")
     return manifest

@@ -18,8 +18,11 @@ from experiments.keyframe_oracle_sampling.formal_artifacts import validate_prepa
 from experiments.keyframe_oracle_sampling.formal_matrix import FORMAL_TRAJECTORY_COUNT
 from experiments.keyframe_oracle_sampling.formal_matrix import build_formal_matrix
 from experiments.keyframe_oracle_sampling.formal_matrix import load_formal_matrix
+from experiments.keyframe_oracle_sampling.formal_matrix import load_formal_submission_row
 from experiments.keyframe_oracle_sampling.formal_matrix import validate_formal_runtime_row_binding
 from experiments.keyframe_oracle_sampling.prepare_formal import dry_run_contract
+from experiments.keyframe_oracle_sampling.submit_formal import MAX_ROWS_PER_ARRAY
+from experiments.keyframe_oracle_sampling.submit_formal import shard_rows
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -57,14 +60,27 @@ def test_formal_matrix_loader_and_runtime_binding_fail_closed(tmp_path):
     matrix_path = protocol / "formal_matrix.json"
     _write_json(matrix_path, build_formal_matrix())
     _write_json(
-        protocol / "submission_record.json",
+        protocol / "submission_record_shard_00.json",
         {
             "attempt_id": 0,
+            "shard_id": 0,
             "slurm_array_job_id": "formal-123",
+            "trajectory_count": 1,
+            "array_task_ids": [0],
             "row_ids": [3199],
         },
     )
     row = load_formal_matrix(matrix_path)["rows"][3199]
+    assert (
+        load_formal_submission_row(
+            run_root,
+            attempt_id=0,
+            shard_id=0,
+            array_task_id=0,
+            environ={"SLURM_ARRAY_JOB_ID": "formal-123"},
+        )
+        == row
+    )
     assert (
         validate_formal_runtime_row_binding(
             run_root,
@@ -78,7 +94,7 @@ def test_formal_matrix_loader_and_runtime_binding_fail_closed(tmp_path):
             dataset=row["dataset"],
             environ={
                 "SLURM_ARRAY_JOB_ID": "formal-123",
-                "SLURM_ARRAY_TASK_ID": "3199",
+                "SLURM_ARRAY_TASK_ID": "0",
             },
         )
         == row
@@ -96,7 +112,7 @@ def test_formal_matrix_loader_and_runtime_binding_fail_closed(tmp_path):
             dataset=row["dataset"],
             environ={
                 "SLURM_ARRAY_JOB_ID": "formal-123",
-                "SLURM_ARRAY_TASK_ID": "3199",
+                "SLURM_ARRAY_TASK_ID": "0",
             },
         )
 
@@ -225,7 +241,33 @@ def _prepared_formal_root(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
 def test_formal_root_requires_exact_submission_digest_and_slurm_array(tmp_path, monkeypatch):
     run_root, seed_path = _prepared_formal_root(tmp_path, monkeypatch)
     manifest = validate_formal_prepared_root(run_root, seed_path, tmp_path)
-    submission_path = run_root / "protocol" / "submission_record.json"
+    planned_shards = []
+    for shard_id, start in enumerate(range(0, 3200, 1000)):
+        row_ids = list(range(start, min(start + 1000, 3200)))
+        array_task_ids = list(range(len(row_ids)))
+        planned_shards.append(
+            {
+                "shard_id": shard_id,
+                "shard_count": 4,
+                "array_task_ids": array_task_ids,
+                "row_ids": row_ids,
+                "array": f"0-{array_task_ids[-1]}%1",
+                "command": ["sbatch", str(shard_id)],
+            }
+        )
+    plan_path = run_root / "protocol" / "submission_plan.json"
+    _write_json(
+        plan_path,
+        {
+            "attempt_id": 0,
+            "trajectory_count": 3200,
+            "shard_count": 4,
+            "max_rows_per_array": 1000,
+            "shards": planned_shards,
+        },
+    )
+    active_shard = planned_shards[0]
+    submission_path = run_root / "protocol" / "submission_record_shard_00.json"
     _write_json(
         submission_path,
         {
@@ -235,8 +277,9 @@ def test_formal_root_requires_exact_submission_digest_and_slurm_array(tmp_path, 
             "launch_manifest_sha256": sha256_file(run_root / "protocol" / "launch_manifest.json"),
             "formal_matrix_sha256": manifest["formal_matrix_sha256"],
             "slurm_array_job_id": "formal-123",
-            "trajectory_count": 3200,
-            "row_ids": list(range(3200)),
+            "trajectory_count": len(active_shard["row_ids"]),
+            "submission_plan_sha256": sha256_file(plan_path),
+            **active_shard,
         },
     )
     monkeypatch.setenv("SLURM_ARRAY_JOB_ID", "formal-123")
@@ -259,6 +302,22 @@ def test_formal_root_requires_exact_submission_digest_and_slurm_array(tmp_path, 
         )
 
 
+def test_formal_rows_are_sharded_below_cluster_limit_without_extra_concurrency():
+    shards, per_shard_concurrent = shard_rows(list(range(3200)), max_concurrent=4)
+    assert MAX_ROWS_PER_ARRAY == 1000
+    assert [len(shard) for shard in shards] == [1000, 1000, 1000, 200]
+    assert per_shard_concurrent == 1
+    assert [row for shard in shards for row in shard] == list(range(3200))
+    assert [f"0-{len(shard) - 1}%1" for shard in shards] == [
+        "0-999%1",
+        "0-999%1",
+        "0-999%1",
+        "0-199%1",
+    ]
+    with pytest.raises(ValueError, match="require --max-concurrent"):
+        shard_rows(list(range(3200)), max_concurrent=3)
+
+
 def test_formal_dry_run_is_complete_and_non_submitting():
     report = dry_run_contract()
     assert report["valid"] is True
@@ -276,6 +335,8 @@ def test_formal_slurm_launcher_preserves_hard_gates_and_two_gpu_isolation():
     assert "preflight_formal_row" in script
     assert script.index("preflight_formal_row") < script.index("scripts/serve_policy.py")
     assert "--args.keyframe-formal-authorization" in script
+    assert "--submission-row-tsv" in script
+    assert 'export KEYFRAME_FORMAL_ROW_ID="${ROW_ID}"' in script
     assert "--formal-authorization" in script
     assert "validate_prepared_formal_root" in evaluator
     assert "validate_formal_runtime_row_binding" in evaluator

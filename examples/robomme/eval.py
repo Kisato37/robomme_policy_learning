@@ -559,6 +559,7 @@ def _keyframe_attempt_manifest(
             "job_id": os.environ.get("SLURM_JOB_ID"),
             "array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID"),
             "array_task_id": os.environ.get("SLURM_ARRAY_TASK_ID"),
+            "formal_matrix_row_id": os.environ.get("KEYFRAME_FORMAL_ROW_ID"),
             "node": os.environ.get("SLURMD_NODENAME"),
             "visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
             "policy_port": args.port,
@@ -664,7 +665,11 @@ def evaluate(args: Args):
                         row_validator(
                             args.keyframe_run_root,
                             attempt_id=args.keyframe_attempt_id,
-                            row_id=int(os.environ.get("SLURM_ARRAY_TASK_ID", "-1")),
+                            row_id=int(
+                                os.environ.get("KEYFRAME_FORMAL_ROW_ID", "-1")
+                                if args.keyframe_trajectory_kind == "formal"
+                                else os.environ.get("SLURM_ARRAY_TASK_ID", "-1")
+                            ),
                             task=task_name,
                             episode_id=episode_id,
                             arm=args.keyframe_selector_arm,
