@@ -39,7 +39,7 @@ from mme_vla_suite.shared.keyframe_oracle_sampling import (
 )
 
 
-PROTOCOL_VERSION = "v0.9.1"
+PROTOCOL_VERSION = "v1.0"
 FORMAL_TASKS = (
     "BinFill",
     "StopCube",

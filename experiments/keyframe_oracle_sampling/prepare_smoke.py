@@ -11,6 +11,7 @@ from pathlib import Path
 
 from experiments.keyframe_oracle_sampling.artifacts import (
     FORMAL_TASKS,
+    PROTOCOL_VERSION,
     atomic_write_bytes,
     atomic_write_json,
     build_seed_table,
@@ -315,7 +316,7 @@ def prepare(run_root: Path, checkpoint_archive: Path) -> Path:
         {
             "run_id": run_root.name,
             "created_utc": utc_now(),
-            "protocol_version": "v0.9.1",
+            "protocol_version": PROTOCOL_VERSION,
             "protocol_sha256": sha256_file(PROTOCOL_PATH),
             "repository": repo_state,
             "benchmark_repository_commit": benchmark_commit,

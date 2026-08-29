@@ -23,6 +23,7 @@ from subgoal_predictor import build_subgoal_predictor, SubgoalPredictorBase
 from evaluation_records import EpisodeResultWriter
 
 from experiments.keyframe_oracle_sampling.artifacts import (
+    PROTOCOL_VERSION,
     RunArtifactStore,
     ScientificKey,
     load_seed_table,
@@ -126,9 +127,8 @@ def validate_keyframe_args(args: Args) -> None:
     }
     if args.keyframe_trajectory_kind == "formal":
         raise RuntimeError(
-            "Formal keyframe evaluation is hard-disabled under protocol v0.9.1; "
-            "a committed v1.0 protocol, completed smoke audit, and explicit user "
-            "authorization are required before implementing a formal launcher"
+            "Direct formal keyframe evaluation is hard-disabled; use only a "
+            "reviewed formal launcher after explicit user authorization"
         )
     try:
         allowed_datasets, expected_steps = expected_by_kind[args.keyframe_trajectory_kind]
@@ -523,7 +523,7 @@ def _keyframe_attempt_manifest(
     """
     difficulty = getattr(env_runner, "difficulty", None)
     return {
-        "protocol_version": "v0.9.1",
+        "protocol_version": PROTOCOL_VERSION,
         "dataset": env_runner.dataset,
         "max_steps": args.max_steps,
         "executed_action_horizon": args.obs_horizon,

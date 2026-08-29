@@ -1,11 +1,27 @@
 # Causal Boundary Oracle Test-Time Memory Selection
 
-**Protocol version:** v0.9.1
-**Amendment:** A-001
-**Status:** amended pre-smoke protocol; scientific definitions are frozen unless
-a further versioned amendment is made
-**Date:** 2026-08-27
+**Protocol version:** v1.0
+**Amendment:** A-001 (incorporated unchanged)
+**Status:** frozen after the required smoke gates and pre-formal audit; formal
+execution has not started
+**Protocol date:** 2026-08-27
+**Freeze date:** 2026-08-29
 **Experiment type:** fixed-checkpoint, test-time-only, four-arm paired evaluation
+
+## Freeze record v1.0
+
+Version v1.0 freezes the scientific definitions from amended protocol v0.9.1
+without changing any arm, boundary rule, checkpoint, memory budget, task or
+episode population, seed, metric, exclusion rule, statistical test, or decision
+criterion. The required pre-formal evidence was reviewed in
+`PREFORMAL_AUDIT.md`; the smoke-tested implementation candidate is commit
+`899912b11a379346b4c8f4d6c80f54f07c118ea3`.
+
+The v0.9.1-to-v1.0 repository changes are administrative protocol freezing,
+protocol-version propagation, and documentation of already-completed
+non-scientific implementation fixes. They do not authorize formal execution.
+Every formal launch still requires a new immutable run root and separate,
+explicit user authorization.
 
 ## Amendment record A-001
 
@@ -737,3 +753,7 @@ The smoke handoff must contain:
 
 Only after this report is reviewed should the protocol be frozen as v1.0 and the
 user be asked to authorize the complete formal run.
+
+Freeze completion: the report was reviewed on 2026-08-29 and this document was
+then frozen as v1.0. Formal execution had not started at freeze time and remains
+subject to the separate authorization requirement above.

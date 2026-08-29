@@ -364,7 +364,7 @@ def test_prepared_gate_binds_exact_architecture_report_digest(tmp_path, monkeypa
     _write_json(
         protocol / "launch_manifest.json",
         {
-            "protocol_version": "v0.9.1",
+            "protocol_version": artifacts.PROTOCOL_VERSION,
             "protocol_sha256": sha256_file(protocol_snapshot),
             "seed_table_file_sha256": sha256_file(seed_table),
             "formal_seed_audit_file_sha256": sha256_file(formal_seed_table),
@@ -609,3 +609,21 @@ def test_clean_worktree_gates_exclude_only_protocol_artifact_namespaces():
         assert "perceptual-framesamp-modul/79999" in source
         assert ":(exclude)src" not in source
         assert ":(exclude)examples" not in source
+
+
+def test_protocol_version_constant_matches_frozen_protocol():
+    repo = Path(__file__).resolve().parents[2]
+    protocol = (
+        repo / "experiments/keyframe_oracle_sampling/EXPERIMENT_PROTOCOL.md"
+    ).read_text()
+    prepare = (
+        repo / "experiments/keyframe_oracle_sampling/prepare_smoke.py"
+    ).read_text()
+    evaluator = (repo / "examples/robomme/eval.py").read_text()
+    assert artifacts.PROTOCOL_VERSION == "v1.0"
+    assert f"**Protocol version:** {artifacts.PROTOCOL_VERSION}" in protocol
+    assert "**Status:** frozen after the required smoke gates" in protocol
+    assert '"protocol_version": PROTOCOL_VERSION' in prepare
+    assert '"protocol_version": PROTOCOL_VERSION' in evaluator
+    assert 'if args.keyframe_trajectory_kind == "formal":' in evaluator
+    assert "Direct formal keyframe evaluation is hard-disabled" in evaluator
