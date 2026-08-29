@@ -9,6 +9,9 @@ import numpy as np
 import pytest
 
 from experiments.keyframe_oracle_sampling.artifacts import ALL_ARMS, FORMAL_TASKS
+from experiments.keyframe_oracle_sampling.artifacts import (
+    released_prepared_component_dtypes,
+)
 from experiments.keyframe_oracle_sampling.architecture_smoke import (
     _action_contract_checks,
     _array_digest,
@@ -56,17 +59,32 @@ def test_smoke_prepare_rejects_a_dirty_candidate():
 
 
 def test_architecture_smoke_checks_absolute_action_contract():
-    valid = _action_contract_checks(np.zeros((20, 8), dtype=np.float32))
+    valid = _action_contract_checks(np.zeros((20, 8), dtype=np.float64))
     assert all(valid.values())
-    assert _action_contract_checks(np.zeros((19, 8), dtype=np.float32))[
+    assert _action_contract_checks(np.zeros((19, 8), dtype=np.float64))[
         "action_shape_is_frozen_20x8"
+    ] is False
+    assert _action_contract_checks(np.zeros((20, 8), dtype=np.float32))[
+        "action_dtype_matches_frozen_released_contract"
     ] is False
     assert _action_contract_checks(np.zeros((20, 8), dtype=np.int32))[
         "action_dtype_is_floating"
     ] is False
-    nonfinite = np.zeros((20, 8), dtype=np.float32)
+    nonfinite = np.zeros((20, 8), dtype=np.float64)
     nonfinite[0, 0] = np.nan
     assert _action_contract_checks(nonfinite)["action_values_are_finite"] is False
+
+
+def test_released_component_dtype_contract_is_strictly_padding_dependent():
+    padded = ("float64", "float64", "float64", "bool")
+    unpadded = ("bfloat16", "float32", "float32", "bool")
+    assert released_prepared_component_dtypes(1) == padded
+    assert released_prepared_component_dtypes(31) == padded
+    assert released_prepared_component_dtypes(32) == unpadded
+    with pytest.raises(ValueError, match="1..32"):
+        released_prepared_component_dtypes(0)
+    with pytest.raises(ValueError, match="1..32"):
+        released_prepared_component_dtypes(33)
 
 
 def test_architecture_smoke_digests_typed_prng_keys_via_raw_key_data():

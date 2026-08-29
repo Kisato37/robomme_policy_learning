@@ -27,6 +27,8 @@ import types
 from typing import Any
 
 from experiments.keyframe_oracle_sampling.artifacts import (
+    SMOKE_ACTION_DTYPE,
+    released_prepared_component_dtypes,
     validate_architecture_pass_report,
 )
 from experiments.keyframe_oracle_sampling.environment_contract import (
@@ -67,10 +69,9 @@ EXPECTED_COMPONENT_SHAPES = (
     (EXPECTED_MEMORY_TOKENS, 8),
     (EXPECTED_MEMORY_TOKENS,),
 )
-EXPECTED_COMPONENT_DTYPES = ("bfloat16", "float32", "float32", "bool")
 EXPECTED_FINAL_MEMORY_DTYPE = "bfloat16"
 EXPECTED_ACTION_SHAPE = (20, 8)
-EXPECTED_ACTION_DTYPE = "float32"
+EXPECTED_ACTION_DTYPE = SMOKE_ACTION_DTYPE
 REPORT_REQUIRED_FIELDS = (
     "passed",
     "repository_commit_sha",
@@ -123,7 +124,7 @@ def _action_contract_checks(value: Any) -> dict[str, bool]:
     actions = np.asarray(value)
     return {
         "action_shape_is_frozen_20x8": actions.shape == EXPECTED_ACTION_SHAPE,
-        "action_dtype_is_frozen_float32": str(actions.dtype)
+        "action_dtype_matches_frozen_released_contract": str(actions.dtype)
         == EXPECTED_ACTION_DTYPE,
         "action_dtype_is_floating": bool(
             jnp.issubdtype(actions.dtype, jnp.floating)
@@ -216,6 +217,7 @@ def _dry_contract_case(arm: str, history_length: int) -> dict[str, Any]:
     selected_digest = hashlib.sha256(
         json.dumps(selected, separators=(",", ":")).encode("ascii")
     ).hexdigest()
+    expected_component_dtypes = released_prepared_component_dtypes(len(selected))
     checks = {
         "history_accumulated_exactly": True,
         "memory_has_four_components": True,
@@ -235,7 +237,7 @@ def _dry_contract_case(arm: str, history_length: int) -> dict[str, Any]:
         "final_memory_dtype_matches_frozen_released_contract": True,
         "final_memory_values_are_finite": True,
         "action_shape_is_frozen_20x8": True,
-        "action_dtype_is_frozen_float32": True,
+        "action_dtype_matches_frozen_released_contract": True,
         "action_dtype_is_floating": True,
         "action_values_are_finite": True,
     }
@@ -251,7 +253,7 @@ def _dry_contract_case(arm: str, history_length: int) -> dict[str, Any]:
         "valid_memory_token_count": 16 * len(selected),
         "padding_frame_count": 32 - len(selected),
         "component_shapes": [list(shape) for shape in EXPECTED_COMPONENT_SHAPES],
-        "component_dtypes": list(EXPECTED_COMPONENT_DTYPES),
+        "component_dtypes": list(expected_component_dtypes),
         "final_memory_tensor_shape": [1, 512, EXPECTED_MEMORY_TOKEN_DIM],
         "final_memory_tensor_dtype": EXPECTED_FINAL_MEMORY_DTYPE,
         "final_memory_tensor_finite": True,
@@ -309,7 +311,10 @@ def _dry_run_contract_example(run_root: Path) -> dict[str, Any]:
         "reference_component_shapes": [
             list(shape) for shape in EXPECTED_COMPONENT_SHAPES
         ],
-        "reference_component_dtypes": list(EXPECTED_COMPONENT_DTYPES),
+        "reference_component_dtypes_by_padding": {
+            "padded": list(released_prepared_component_dtypes(1)),
+            "unpadded": list(released_prepared_component_dtypes(32)),
+        },
         "reference_final_memory_dtype": EXPECTED_FINAL_MEMORY_DTYPE,
         "reference_action_shape": list(EXPECTED_ACTION_SHAPE),
         "reference_action_dtype": EXPECTED_ACTION_DTYPE,
@@ -571,6 +576,7 @@ def _run_once(
         else min(32, history_length)
     )
     expected_tokens = TOKENS_PER_FRAME * expected_frames
+    expected_component_dtypes = released_prepared_component_dtypes(expected_frames)
     actions = np.asarray(output["actions"])
     final_memory_shape = trace["final_memory_tensor_shape"]
     final_memory_dtype = str(trace["final_memory_tensor_dtype"])
@@ -584,7 +590,7 @@ def _run_once(
         "component_dtypes_match_frozen_released_contract": tuple(
             str(value.dtype) for value in arrays
         )
-        == EXPECTED_COMPONENT_DTYPES,
+        == expected_component_dtypes,
         "all_components_have_512_slots": all(
             value.shape[0] == EXPECTED_MEMORY_TOKENS for value in arrays
         ),
@@ -791,8 +797,13 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
                 and repeat["component_shapes"]
                 == [list(shape) for shape in EXPECTED_COMPONENT_SHAPES],
                 "released_dtype_match": first["component_dtypes"]
-                == list(EXPECTED_COMPONENT_DTYPES)
-                and repeat["component_dtypes"] == list(EXPECTED_COMPONENT_DTYPES),
+                == list(
+                    released_prepared_component_dtypes(first["valid_frame_count"])
+                )
+                and repeat["component_dtypes"]
+                == list(
+                    released_prepared_component_dtypes(repeat["valid_frame_count"])
+                ),
                 "released_action_shape_match": first["action_shape"]
                 == list(EXPECTED_ACTION_SHAPE)
                 and repeat["action_shape"] == list(EXPECTED_ACTION_SHAPE),
@@ -838,7 +849,10 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
             "reference_component_shapes": [
                 list(shape) for shape in EXPECTED_COMPONENT_SHAPES
             ],
-            "reference_component_dtypes": list(EXPECTED_COMPONENT_DTYPES),
+            "reference_component_dtypes_by_padding": {
+                "padded": list(released_prepared_component_dtypes(1)),
+                "unpadded": list(released_prepared_component_dtypes(32)),
+            },
             "reference_final_memory_dtype": EXPECTED_FINAL_MEMORY_DTYPE,
             "reference_action_shape": list(EXPECTED_ACTION_SHAPE),
             "reference_action_dtype": EXPECTED_ACTION_DTYPE,

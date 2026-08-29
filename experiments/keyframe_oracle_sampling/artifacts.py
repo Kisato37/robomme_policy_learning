@@ -91,7 +91,13 @@ SMOKE_PREPARED_COMPONENT_SHAPES = (
     (512, 8),
     (512,),
 )
-SMOKE_PREPARED_COMPONENT_DTYPES = (
+SMOKE_PADDED_PREPARED_COMPONENT_DTYPES = (
+    "float64",
+    "float64",
+    "float64",
+    "bool",
+)
+SMOKE_UNPADDED_PREPARED_COMPONENT_DTYPES = (
     "bfloat16",
     "float32",
     "float32",
@@ -100,7 +106,7 @@ SMOKE_PREPARED_COMPONENT_DTYPES = (
 SMOKE_FINAL_MEMORY_SHAPE = (1, 512, 1024)
 SMOKE_FINAL_MEMORY_DTYPE = "bfloat16"
 SMOKE_ACTION_SHAPE = (20, 8)
-SMOKE_ACTION_DTYPE = "float32"
+SMOKE_ACTION_DTYPE = "float64"
 ARCHITECTURE_COMMON_CHECKS = frozenset(
     {
         "history_accumulated_exactly",
@@ -121,7 +127,7 @@ ARCHITECTURE_COMMON_CHECKS = frozenset(
         "final_memory_dtype_matches_frozen_released_contract",
         "final_memory_values_are_finite",
         "action_shape_is_frozen_20x8",
-        "action_dtype_is_frozen_float32",
+        "action_dtype_matches_frozen_released_contract",
         "action_dtype_is_floating",
         "action_values_are_finite",
     }
@@ -142,6 +148,21 @@ ARCHITECTURE_RESET_FIELDS = {
 
 class ArtifactContractError(RuntimeError):
     pass
+
+
+def released_prepared_component_dtypes(
+    valid_frame_count: int,
+) -> tuple[str, str, str, str]:
+    """Return the strict released dtype contract for a 32-frame memory budget."""
+    if type(valid_frame_count) is not int:
+        raise TypeError("valid_frame_count must be an integer")
+    if not 1 <= valid_frame_count <= 32:
+        raise ValueError("valid_frame_count must be in the released range 1..32")
+    if valid_frame_count < 32:
+        # The released right-padding path concatenates default float64 zeros,
+        # promoting all three floating components whenever padding is present.
+        return SMOKE_PADDED_PREPARED_COMPONENT_DTYPES
+    return SMOKE_UNPADDED_PREPARED_COMPONENT_DTYPES
 
 
 def validate_architecture_pass_report(
@@ -175,7 +196,10 @@ def validate_architecture_pass_report(
         "reference_component_shapes": [
             list(shape) for shape in SMOKE_PREPARED_COMPONENT_SHAPES
         ],
-        "reference_component_dtypes": list(SMOKE_PREPARED_COMPONENT_DTYPES),
+        "reference_component_dtypes_by_padding": {
+            "padded": list(released_prepared_component_dtypes(1)),
+            "unpadded": list(released_prepared_component_dtypes(32)),
+        },
         "reference_final_memory_dtype": SMOKE_FINAL_MEMORY_DTYPE,
         "reference_action_shape": list(SMOKE_ACTION_SHAPE),
         "reference_action_dtype": SMOKE_ACTION_DTYPE,
@@ -231,6 +255,9 @@ def validate_architecture_pass_report(
         expected_selected_digest = hashlib.sha256(
             json.dumps(expected_selected, separators=(",", ":")).encode("ascii")
         ).hexdigest()
+        expected_component_dtypes = released_prepared_component_dtypes(
+            len(expected_selected)
+        )
         expected_checks = set(ARCHITECTURE_COMMON_CHECKS)
         if arm == SelectorArm.OFFICIAL_UNIFORM.value:
             expected_checks.add("literal_uniform_indices_match")
@@ -267,7 +294,7 @@ def validate_architecture_pass_report(
                     "component_shapes": [
                         list(shape) for shape in SMOKE_PREPARED_COMPONENT_SHAPES
                     ],
-                    "component_dtypes": list(SMOKE_PREPARED_COMPONENT_DTYPES),
+                    "component_dtypes": list(expected_component_dtypes),
                     "final_memory_tensor_shape": list(SMOKE_FINAL_MEMORY_SHAPE),
                     "final_memory_tensor_dtype": SMOKE_FINAL_MEMORY_DTYPE,
                     "final_memory_tensor_finite": True,
@@ -1565,7 +1592,10 @@ def audit_smoke_attempt(
             trace.get("state_tensor_dtype"),
             trace.get("mask_dtype"),
         )
-        if component_dtypes != SMOKE_PREPARED_COMPONENT_DTYPES:
+        expected_component_dtypes = released_prepared_component_dtypes(
+            len(expected_selected)
+        )
+        if component_dtypes != expected_component_dtypes:
             raise ArtifactContractError(
                 "Prepared memory component dtypes differ from the frozen checkpoint contract"
             )

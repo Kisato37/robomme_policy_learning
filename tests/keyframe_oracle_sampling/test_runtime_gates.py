@@ -141,6 +141,31 @@ def test_architecture_pass_validator_rejects_truthy_cases_without_absolute_evide
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "bad_value"),
+    [
+        ("component_dtypes", ["bfloat16", "float32", "float32", "bool"]),
+        ("action_dtype", "float32"),
+    ],
+)
+def test_architecture_pass_validator_rejects_stale_unpadded_or_action_contract(
+    tmp_path, field, bad_value
+):
+    report = _architecture_pass(tmp_path)
+    u16 = next(
+        case
+        for case in report["cases"]
+        if case["arm"] == "U" and case["history_length"] == 16
+    )
+    u16["first"][field] = bad_value
+    with pytest.raises(ArtifactContractError, match="frozen smoke contract"):
+        validate_architecture_pass_report(
+            report,
+            run_root=tmp_path,
+            architecture_submission=_architecture_submission(tmp_path),
+        )
+
+
 def test_smoke_submitter_rejects_vacuous_architecture_pass(tmp_path, monkeypatch):
     run_root = tmp_path / "run"
     protocol = run_root / "protocol"

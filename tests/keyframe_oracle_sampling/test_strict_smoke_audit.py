@@ -15,6 +15,7 @@ from experiments.keyframe_oracle_sampling.artifacts import (
     ScientificKey,
     audit_smoke_attempt,
     build_smoke_seed_table,
+    released_prepared_component_dtypes,
     validate_seed_table,
 )
 from mme_vla_suite.shared.keyframe_oracle_sampling import (
@@ -39,6 +40,7 @@ def _strict_attempt(
     final_memory_shape: list[int] | None = None,
     complete_initial_conditions: bool = True,
     valid_mask_contract: bool = True,
+    wrong_component_dtypes: bool = False,
 ):
     task = "InsertPeg"
     key = ScientificKey(task, 0, arm, "short")
@@ -120,6 +122,9 @@ def _strict_attempt(
         selected_hash = hashlib.sha256(
             json.dumps(selected, separators=(",", ":")).encode("ascii")
         ).hexdigest()
+        component_dtypes = list(released_prepared_component_dtypes(len(selected)))
+        if wrong_component_dtypes and call_index == 0:
+            component_dtypes = ["bfloat16", "float32", "float32", "bool"]
         end_to_end_latency = 2.0 + call_index
         model_latency = 1.0 + call_index
         writer.append_trace(
@@ -148,13 +153,13 @@ def _strict_attempt(
                 "mask_padding_all_false": valid_mask_contract,
                 "mask_sha256": _sha(f"mask-{call_index}"),
                 "image_tensor_shape": [512, 2048],
-                "image_tensor_dtype": "bfloat16",
+                "image_tensor_dtype": component_dtypes[0],
                 "image_tensor_sha256": _sha(f"image-{call_index}"),
                 "position_tensor_shape": [512, 768],
-                "position_tensor_dtype": "float32",
+                "position_tensor_dtype": component_dtypes[1],
                 "position_tensor_sha256": _sha(f"position-{call_index}"),
                 "state_tensor_shape": [512, 8],
-                "state_tensor_dtype": "float32",
+                "state_tensor_dtype": component_dtypes[2],
                 "state_tensor_sha256": _sha(f"state-{call_index}"),
                 "prepared_memory_component_shapes": [
                     [512, 2048],
@@ -270,4 +275,10 @@ def test_strict_smoke_attempt_requires_all_five_initial_condition_hashes(tmp_pat
 def test_strict_smoke_attempt_rejects_invalid_padding_mask_contract(tmp_path):
     fixture = _strict_attempt(tmp_path, arm="U", valid_mask_contract=False)
     with pytest.raises(ArtifactContractError, match="valid prefix"):
+        _audit(fixture)
+
+
+def test_strict_smoke_attempt_rejects_unpadded_dtypes_for_padded_memory(tmp_path):
+    fixture = _strict_attempt(tmp_path, arm="U", wrong_component_dtypes=True)
+    with pytest.raises(ArtifactContractError, match="component dtypes"):
         _audit(fixture)
