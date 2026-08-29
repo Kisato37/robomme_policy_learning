@@ -35,6 +35,44 @@ def test_environment_contract_requires_and_matches_both_paths(monkeypatch):
     assert validate_environment_contract(identity) == identity
 
 
+def test_environment_contract_accepts_aliases_only_for_the_same_filesystem_objects(
+    tmp_path, monkeypatch
+):
+    real_root = tmp_path / "real"
+    real_venv = real_root / "venv"
+    real_base = real_root / "base"
+    real_venv.mkdir(parents=True)
+    real_base.mkdir()
+    executable = real_venv / "python"
+    base_executable = real_base / "python"
+    executable.write_text("venv interpreter")
+    base_executable.write_text("base interpreter")
+    alias_root = tmp_path / "alias"
+    alias_root.symlink_to(real_root, target_is_directory=True)
+
+    expected = _identity()
+    observed = copy.deepcopy(expected)
+    path_fields = {
+        "launcher_python_path": (real_venv / "python", alias_root / "venv" / "python"),
+        "reported_executable": (real_venv / "python", alias_root / "venv" / "python"),
+        "executable_realpath": (real_base / "python", alias_root / "base" / "python"),
+        "venv_prefix": (real_venv, alias_root / "venv"),
+        "base_prefix": (real_base, alias_root / "base"),
+    }
+    for role in ("policy", "simulator"):
+        for field, (expected_path, observed_path) in path_fields.items():
+            expected["python_environments"][role][field] = str(expected_path)
+            observed["python_environments"][role][field] = str(observed_path)
+    monkeypatch.setattr(environment_contract, "live_environment_identity", lambda: observed)
+    assert validate_environment_contract(expected) == observed
+
+    different = tmp_path / "different-python"
+    different.write_text("different interpreter")
+    observed["python_environments"]["policy"]["reported_executable"] = str(different)
+    with pytest.raises(EnvironmentContractError, match="differ"):
+        validate_environment_contract(expected)
+
+
 @pytest.mark.parametrize("field", ["environment_locks", "python_environments"])
 def test_environment_contract_rejects_missing_provenance(monkeypatch, field):
     identity = _identity()
