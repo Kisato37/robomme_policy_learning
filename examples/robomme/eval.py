@@ -30,10 +30,18 @@ from experiments.keyframe_oracle_sampling.artifacts import (
     is_retryable_infrastructure_exception,
     validate_prepared_smoke_root,
 )
+from experiments.keyframe_oracle_sampling.formal_artifacts import (
+    validate_prepared_formal_root,
+)
+from experiments.keyframe_oracle_sampling.formal_matrix import (
+    validate_formal_runtime_row_binding,
+)
 from experiments.keyframe_oracle_sampling.smoke_matrix import (
     validate_runtime_row_binding,
 )
 from mme_vla_suite.shared.keyframe_oracle_sampling import (
+    FORMAL_SEED_DATASET,
+    FORMAL_SEED_SCOPE,
     MAX_POLICY_CALLS,
     SMOKE_SEED_DATASET,
     SMOKE_SEED_SCOPE,
@@ -95,6 +103,7 @@ class Args:
     keyframe_run_root: str = ""
     keyframe_attempt_id: int = 0
     keyframe_trajectory_kind: str = "formal"
+    keyframe_formal_authorization: str = ""
     # this can accelerate the evaluation process for symbolic memory
     # In our experiments, we just set this to 1
 
@@ -125,11 +134,6 @@ def validate_keyframe_args(args: Args) -> None:
         "terminal": ({"val", "validation"}, 1300),
         "formal": ({"test"}, 1300),
     }
-    if args.keyframe_trajectory_kind == "formal":
-        raise RuntimeError(
-            "Direct formal keyframe evaluation is hard-disabled; use only a "
-            "reviewed formal launcher after explicit user authorization"
-        )
     try:
         allowed_datasets, expected_steps = expected_by_kind[args.keyframe_trajectory_kind]
     except KeyError as exc:
@@ -143,6 +147,18 @@ def validate_keyframe_args(args: Args) -> None:
         )
     if args.exclude_tasks or args.re_eval_tasks:
         raise ValueError("Keyframe runs forbid exclusion and outcome-conditioned re-evaluation")
+    if args.keyframe_trajectory_kind == "formal":
+        digest = args.keyframe_formal_authorization
+        if (
+            len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise RuntimeError(
+                "Direct formal keyframe evaluation is hard-disabled: the dedicated "
+                "formal launcher must supply its recorded submission digest"
+            )
+    elif args.keyframe_formal_authorization:
+        raise ValueError("Development smoke may not carry a formal authorization digest")
 
 
 class EpisodeEvaluator:
@@ -155,10 +171,15 @@ class EpisodeEvaluator:
         if args.keyframe_selector_arm:
             if not args.keyframe_seed_table:
                 raise ValueError("A keyframe selector run requires --args.keyframe-seed-table")
+            expected_scope, expected_dataset = (
+                (FORMAL_SEED_SCOPE, FORMAL_SEED_DATASET)
+                if args.keyframe_trajectory_kind == "formal"
+                else (SMOKE_SEED_SCOPE, SMOKE_SEED_DATASET)
+            )
             self._seed_table_payload, self._seed_lookup = load_seed_table(
                 args.keyframe_seed_table,
-                expected_scope=SMOKE_SEED_SCOPE,
-                expected_dataset=SMOKE_SEED_DATASET,
+                expected_scope=expected_scope,
+                expected_dataset=expected_dataset,
             )
 
     def _selector_config(self, env_runner: EnvRunner) -> dict | None:
@@ -572,12 +593,21 @@ def evaluate(args: Args):
     if bool(args.keyframe_selector_arm) != bool(keyframe_store):
         raise ValueError("Keyframe selector arm and keyframe run root must be configured together")
     if keyframe_store is not None:
-        validate_prepared_smoke_root(
-            args.keyframe_run_root,
-            args.keyframe_seed_table,
-            Path(__file__).resolve().parents[2],
-            attempt_id=args.keyframe_attempt_id,
-        )
+        if args.keyframe_trajectory_kind == "formal":
+            validate_prepared_formal_root(
+                args.keyframe_run_root,
+                args.keyframe_seed_table,
+                Path(__file__).resolve().parents[2],
+                attempt_id=args.keyframe_attempt_id,
+                authorization_digest=args.keyframe_formal_authorization,
+            )
+        else:
+            validate_prepared_smoke_root(
+                args.keyframe_run_root,
+                args.keyframe_seed_table,
+                Path(__file__).resolve().parents[2],
+                attempt_id=args.keyframe_attempt_id,
+            )
 
     while not os.path.exists(save_dir / "log.json"):
         for task_name in task_names:
@@ -626,7 +656,12 @@ def evaluate(args: Args):
                 )
                 try:
                     if keyframe_store is not None:
-                        validate_runtime_row_binding(
+                        row_validator = (
+                            validate_formal_runtime_row_binding
+                            if args.keyframe_trajectory_kind == "formal"
+                            else validate_runtime_row_binding
+                        )
+                        row_validator(
                             args.keyframe_run_root,
                             attempt_id=args.keyframe_attempt_id,
                             row_id=int(os.environ.get("SLURM_ARRAY_TASK_ID", "-1")),

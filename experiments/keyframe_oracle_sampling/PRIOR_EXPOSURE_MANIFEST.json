@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "frozen_before_formal_execution": true,
+  "present_formal_outcomes_inspected": false,
+  "notes": [
+    "Entries are deduplicated task/split/episode cells whose outcomes were inspected before the v1.0 formal launch.",
+    "PickXtimes test episode 0 is included conservatively: its 2026-08-11 legacy local artifacts omit the split, while the contemporaneous EnvRunner default was test.",
+    "The manifest affects only the prespecified sensitivity analysis; the complete 3,200-cell test census remains the primary population."
+  ],
+  "entries": [
+    {"task": "BinFill", "split": "val", "episode_id": 0},
+    {"task": "StopCube", "split": "val", "episode_id": 0},
+    {"task": "PickXtimes", "split": "val", "episode_id": 0},
+    {"task": "SwingXtimes", "split": "val", "episode_id": 0},
+    {"task": "ButtonUnmask", "split": "val", "episode_id": 0},
+    {"task": "VideoUnmask", "split": "val", "episode_id": 0},
+    {"task": "VideoUnmaskSwap", "split": "val", "episode_id": 0},
+    {"task": "ButtonUnmaskSwap", "split": "val", "episode_id": 0},
+    {"task": "PickHighlight", "split": "val", "episode_id": 0},
+    {"task": "VideoRepick", "split": "val", "episode_id": 0},
+    {"task": "VideoPlaceButton", "split": "val", "episode_id": 0},
+    {"task": "VideoPlaceOrder", "split": "val", "episode_id": 0},
+    {"task": "MoveCube", "split": "val", "episode_id": 0},
+    {"task": "InsertPeg", "split": "val", "episode_id": 0},
+    {"task": "PatternLock", "split": "val", "episode_id": 0},
+    {"task": "RouteStick", "split": "val", "episode_id": 0},
+    {"task": "InsertPeg", "split": "val", "episode_id": 1},
+    {"task": "InsertPeg", "split": "val", "episode_id": 2},
+    {"task": "InsertPeg", "split": "val", "episode_id": 3},
+    {"task": "InsertPeg", "split": "val", "episode_id": 4},
+    {"task": "InsertPeg", "split": "val", "episode_id": 5},
+    {"task": "InsertPeg", "split": "val", "episode_id": 6},
+    {"task": "InsertPeg", "split": "val", "episode_id": 7},
+    {"task": "InsertPeg", "split": "val", "episode_id": 8},
+    {"task": "InsertPeg", "split": "val", "episode_id": 9},
+    {"task": "PickXtimes", "split": "test", "episode_id": 0}
+  ],
+  "evidence_sources": [
+    "runs/keyframe_oracle_sampling/20260829T181633Z_899912b1_devsmoke/aggregate/smoke_audit.json",
+    "runs/test_time_scaling/memory_sampling_bridge_pilot*/manifest.json",
+    "runs/test_time_scaling/memory_sampling_replication_pilot/manifest.json",
+    "runs/test_time_scaling/full_episode_pickxtimes_ep0.json",
+    "runs/test_time_scaling/official_smoke.json",
+    "runs/test_time_scaling/seeded_sampling.json"
+  ]
+}

@@ -9,15 +9,25 @@ import os
 from pathlib import Path
 from typing import Any
 
+from experiments.keyframe_oracle_sampling.artifacts import PROTOCOL_VERSION
 from experiments.keyframe_oracle_sampling.artifacts import ArtifactContractError
 from experiments.keyframe_oracle_sampling.artifacts import EpisodeAttemptWriter
-from experiments.keyframe_oracle_sampling.artifacts import PROTOCOL_VERSION
 from experiments.keyframe_oracle_sampling.artifacts import RunArtifactStore
 from experiments.keyframe_oracle_sampling.artifacts import ScientificKey
 from experiments.keyframe_oracle_sampling.artifacts import read_jsonl
 from experiments.keyframe_oracle_sampling.artifacts import sha256_file
 from experiments.keyframe_oracle_sampling.artifacts import validate_prepared_smoke_root
+from experiments.keyframe_oracle_sampling.formal_artifacts import validate_prepared_formal_root
+from experiments.keyframe_oracle_sampling.formal_matrix import validate_formal_runtime_row_binding
 from experiments.keyframe_oracle_sampling.smoke_matrix import validate_runtime_row_binding
+
+
+def _matrix_row_field(trajectory_kind: str) -> str:
+    return (
+        "formal_matrix_row_id"
+        if trajectory_kind == "formal"
+        else "smoke_matrix_row_id"
+    )
 
 
 def record_launcher_failure(
@@ -45,7 +55,7 @@ def record_launcher_failure(
             "protocol_version": PROTOCOL_VERSION,
             "dataset": dataset,
             "max_steps": int(max_steps),
-            "smoke_matrix_row_id": int(row_id),
+            _matrix_row_field(trajectory_kind): int(row_id),
             "execution_phase": "policy_server_readiness",
             "scientific_actions_started": False,
             "environment_setup_completed": False,
@@ -58,7 +68,7 @@ def record_launcher_failure(
         {
             **key.as_dict(),
             "attempt_id": int(attempt_id),
-            "smoke_matrix_row_id": int(row_id),
+            _matrix_row_field(trajectory_kind): int(row_id),
             "error_type": error_type,
             "error": error,
             "failure_phase": "policy_server_readiness",
@@ -156,7 +166,7 @@ def reconcile_evaluator_exit(
                 "protocol_version": PROTOCOL_VERSION,
                 "dataset": dataset,
                 "max_steps": int(max_steps),
-                "smoke_matrix_row_id": int(row_id),
+                _matrix_row_field(trajectory_kind): int(row_id),
                 "execution_phase": "evaluator_lifecycle",
                 "scientific_actions_started": False,
                 "environment_setup_completed": False,
@@ -220,7 +230,7 @@ def reconcile_evaluator_exit(
         {
             **key.as_dict(),
             "attempt_id": int(attempt_id),
-            "smoke_matrix_row_id": int(row_id),
+            _matrix_row_field(trajectory_kind): int(row_id),
             "error_type": error_type,
             "error": error,
             "failure_phase": "evaluator_lifecycle",
@@ -255,15 +265,29 @@ def main() -> None:
     parser.add_argument("--error")
     parser.add_argument("--policy-port", type=int, required=True)
     parser.add_argument("--evaluator-exit-status", type=int)
+    parser.add_argument("--formal-authorization", default="")
     args = parser.parse_args()
 
-    validate_prepared_smoke_root(
-        args.run_root,
-        args.seed_table,
-        args.repo_root,
-        attempt_id=args.attempt_id,
-    )
-    validate_runtime_row_binding(
+    if args.trajectory_kind == "formal":
+        validate_prepared_formal_root(
+            args.run_root,
+            args.seed_table,
+            args.repo_root,
+            attempt_id=args.attempt_id,
+            authorization_digest=args.formal_authorization,
+        )
+        row_validator = validate_formal_runtime_row_binding
+    else:
+        if args.formal_authorization:
+            parser.error("smoke reconciliation may not carry formal authorization")
+        validate_prepared_smoke_root(
+            args.run_root,
+            args.seed_table,
+            args.repo_root,
+            attempt_id=args.attempt_id,
+        )
+        row_validator = validate_runtime_row_binding
+    row_validator(
         args.run_root,
         attempt_id=args.attempt_id,
         row_id=args.row_id,
