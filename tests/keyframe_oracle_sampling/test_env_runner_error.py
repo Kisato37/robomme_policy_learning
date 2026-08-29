@@ -6,6 +6,7 @@ import types
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "examples" / "robomme"
@@ -95,3 +96,77 @@ def test_failaware_benchmark_error_is_preserved_before_observation_unpacking():
     assert stopped is True
     assert outcome == "error"
     assert runner.info["exception_type"] == "RuntimeError"
+
+
+def test_task_state_hash_ignores_only_highlight_runtime_object_address():
+    first = {
+        "actors": {
+            "cube": np.array([1.0, 2.0], dtype=np.float32),
+            "highlight_disk_123456_1": np.array([3.0, 4.0], dtype=np.float32),
+        }
+    }
+    second = {
+        "actors": {
+            "cube": np.array([1.0, 2.0], dtype=np.float32),
+            "highlight_disk_987654_1": np.array([3.0, 4.0], dtype=np.float32),
+        }
+    }
+    changed_state = {
+        "actors": {
+            "cube": np.array([1.0, 2.0], dtype=np.float32),
+            "highlight_disk_987654_1": np.array([3.0, 5.0], dtype=np.float32),
+        }
+    }
+
+    canonical_first = EnvRunner._canonicalize_task_state_for_hashing(first)
+    canonical_second = EnvRunner._canonicalize_task_state_for_hashing(second)
+    canonical_changed = EnvRunner._canonicalize_task_state_for_hashing(changed_state)
+    assert EnvRunner._digest_value(canonical_first) == EnvRunner._digest_value(
+        canonical_second
+    )
+    assert EnvRunner._digest_value(canonical_first) != EnvRunner._digest_value(
+        canonical_changed
+    )
+
+
+def test_task_state_hash_canonicalization_rejects_highlight_name_collision():
+    state = {
+        "actors": {
+            "highlight_disk_123456_1": np.zeros(2, dtype=np.float32),
+            "highlight_disk_<runtime-id-0>_1": np.ones(2, dtype=np.float32),
+        }
+    }
+    with pytest.raises(RuntimeError, match="duplicate key"):
+        EnvRunner._canonicalize_task_state_for_hashing(state)
+
+
+def test_task_state_hash_preserves_multiple_highlight_actor_states_as_a_multiset():
+    first = {
+        "actors": {
+            "highlight_disk_123456_1": np.zeros(2, dtype=np.float32),
+            "highlight_disk_987654_1": np.ones(2, dtype=np.float32),
+        }
+    }
+    same_state_new_addresses = {
+        "actors": {
+            "highlight_disk_555555_1": np.ones(2, dtype=np.float32),
+            "highlight_disk_444444_1": np.zeros(2, dtype=np.float32),
+        }
+    }
+    missing_actor = {
+        "actors": {
+            "highlight_disk_555555_1": np.ones(2, dtype=np.float32),
+        }
+    }
+
+    canonical_first = EnvRunner._canonicalize_task_state_for_hashing(first)
+    canonical_same = EnvRunner._canonicalize_task_state_for_hashing(
+        same_state_new_addresses
+    )
+    canonical_missing = EnvRunner._canonicalize_task_state_for_hashing(missing_actor)
+    assert EnvRunner._digest_value(canonical_first) == EnvRunner._digest_value(
+        canonical_same
+    )
+    assert EnvRunner._digest_value(canonical_first) != EnvRunner._digest_value(
+        canonical_missing
+    )

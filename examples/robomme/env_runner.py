@@ -4,6 +4,7 @@ RoboMME environment runing wrapper: build envs, get observations, and step with 
 from __future__ import annotations
 import hashlib
 import json
+import re
 from typing import Any
 import numpy as np
 
@@ -103,6 +104,77 @@ class EnvRunner:
         update(value)
         return digest.hexdigest()
 
+    _HIGHLIGHT_ACTOR_NAME = re.compile(r"^highlight_disk_\d+_(\d+)$")
+
+    @classmethod
+    def _canonicalize_task_state_for_hashing(
+        cls,
+        value: Any,
+        path: tuple[str, ...] = (),
+    ) -> Any:
+        """Remove only the runtime object address from highlight actor names.
+
+        RoboMME names visual-only highlight actors with ``id(obj)``, which is a
+        process-local memory address rather than simulator state.  The actor's
+        complete state remains in the digest under a stable, value-sorted name.
+        This also preserves multiple highlighted actors without relying on
+        their process-local addresses.  Collisions with ordinary actor names
+        fail closed instead of silently dropping or merging state.
+        """
+        if isinstance(value, dict):
+            canonical: dict[Any, Any] = {}
+            highlight_actors: list[tuple[int, str, Any]] = []
+            for key, child in value.items():
+                canonical_child = cls._canonicalize_task_state_for_hashing(
+                    child,
+                    path + (str(key),),
+                )
+                if path == ("actors",) and isinstance(key, str):
+                    match = cls._HIGHLIGHT_ACTOR_NAME.fullmatch(key)
+                    if match is not None:
+                        highlight_actors.append(
+                            (
+                                int(match.group(1)),
+                                cls._digest_value(canonical_child),
+                                canonical_child,
+                            )
+                        )
+                        continue
+                if key in canonical:
+                    raise RuntimeError(
+                        "Initial task-state canonicalization produced a duplicate "
+                        f"key at {'/'.join(path) or '<root>'}: {key}"
+                    )
+                canonical[key] = canonical_child
+            for ordinal, (suffix, _digest, child) in enumerate(
+                sorted(highlight_actors, key=lambda entry: (entry[0], entry[1]))
+            ):
+                canonical_key = f"highlight_disk_<runtime-id-{ordinal}>_{suffix}"
+                if canonical_key in canonical:
+                    raise RuntimeError(
+                        "Initial task-state canonicalization produced a duplicate "
+                        f"key at {'/'.join(path) or '<root>'}: {canonical_key}"
+                    )
+                canonical[canonical_key] = child
+            return canonical
+        if isinstance(value, list):
+            return [
+                cls._canonicalize_task_state_for_hashing(
+                    child,
+                    path + (str(index),),
+                )
+                for index, child in enumerate(value)
+            ]
+        if isinstance(value, tuple):
+            return tuple(
+                cls._canonicalize_task_state_for_hashing(
+                    child,
+                    path + (str(index),),
+                )
+                for index, child in enumerate(value)
+            )
+        return value
+
     def _aligned_current_task_indices(self, obs: dict[str, Any]) -> list[int] | None:
         stages = obs.get("current_task_index")
         frame_count = len(obs["front_rgb_list"])
@@ -150,11 +222,14 @@ class EnvRunner:
                 raise RuntimeError(
                     "Global blocker: live benchmark cannot expose reset task state for fairness hashing"
                 )
+            task_state = self._canonicalize_task_state_for_hashing(
+                task_state_getter()
+            )
             self.initial_condition_hashes = {
                 "front_observations_sha256": self._digest_value(images),
                 "wrist_observations_sha256": self._digest_value(wrist_images),
                 "robot_states_sha256": self._digest_value(states),
-                "task_state_sha256": self._digest_value(task_state_getter()),
+                "task_state_sha256": self._digest_value(task_state),
                 "task_instruction_sha256": self._digest_value(self.task_goal),
             }
         else:
