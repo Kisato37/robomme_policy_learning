@@ -29,6 +29,27 @@ if [[ ! -x "${POLICY_PYTHON}" ]]; then
   exit 2
 fi
 
+resolve_allocated_gpus() {
+  local visible_devices="${1:-}"
+  local policy_device=""
+  local simulator_device=""
+  if [[ ! "${visible_devices}" =~ ^[^,[:space:]]+,[^,[:space:]]+$ ]]; then
+    echo "Expected exactly two comma-separated Slurm CUDA devices, got: ${visible_devices:-<unset>}" >&2
+    return 1
+  fi
+  IFS=',' read -r policy_device simulator_device <<<"${visible_devices}"
+  if [[ "${policy_device}" == "${simulator_device}" ]]; then
+    echo "Policy and simulator CUDA devices must be distinct" >&2
+    return 1
+  fi
+  printf '%s\t%s\n' "${policy_device}" "${simulator_device}"
+}
+
+if [[ "${1:-}" == "--gpu-binding-dry-run" ]]; then
+  resolve_allocated_gpus "${CUDA_VISIBLE_DEVICES:-}"
+  exit 0
+fi
+
 if [[ "${1:-}" == "--dry-run" ]]; then
   "${POLICY_PYTHON}" -m experiments.keyframe_oracle_sampling.prepare_smoke --dry-run
   "${POLICY_PYTHON}" -m experiments.keyframe_oracle_sampling.smoke_matrix --row 0 --row-tsv
@@ -47,6 +68,9 @@ ROW_ID="${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}"
 ROW_TSV="$("${POLICY_PYTHON}" -m experiments.keyframe_oracle_sampling.smoke_matrix \
   --row "${ROW_ID}" --row-tsv)"
 IFS=$'\t' read -r TASK ARM TRAJECTORY_KIND MAX_STEPS DATASET <<<"${ROW_TSV}"
+GPU_BINDING_TSV="$(resolve_allocated_gpus "${CUDA_VISIBLE_DEVICES:-}")"
+IFS=$'\t' read -r POLICY_CUDA_DEVICE SIMULATOR_CUDA_DEVICE <<<"${GPU_BINDING_TSV}"
+echo "GPU binding: allocated=${CUDA_VISIBLE_DEVICES}; policy=${POLICY_CUDA_DEVICE}; simulator=${SIMULATOR_CUDA_DEVICE}"
 
 ATTEMPT_ROOT="${RUN_ROOT}/trajectories/${TASK}/episode_00/${ARM}/${TRAJECTORY_KIND}/attempt_$(printf '%02d' "${ATTEMPT_ID}")"
 if [[ -e "${ATTEMPT_ROOT}" ]]; then
@@ -125,7 +149,7 @@ trap 'handle_signal INT 130' INT
 trap 'handle_signal TERM 143' TERM
 
 cd "${REPO_ROOT}"
-CUDA_VISIBLE_DEVICES=0 "${POLICY_PYTHON}" scripts/serve_policy.py \
+CUDA_VISIBLE_DEVICES="${POLICY_CUDA_DEVICE}" "${POLICY_PYTHON}" scripts/serve_policy.py \
   --seed=7 --port="${PORT}" policy:checkpoint \
   --policy.dir="${CHECKPOINT}" --policy.config=mme_vla_suite \
   >"${RUN_ROOT}/server-${SLURM_ARRAY_JOB_ID}-${ROW_ID}.out" \
@@ -188,7 +212,7 @@ fi
 if [[ -n "${TERMINATION_STATUS}" ]]; then
   EVALUATOR_STATUS="${TERMINATION_STATUS}"
 else
-  CUDA_VISIBLE_DEVICES=1 \
+  CUDA_VISIBLE_DEVICES="${SIMULATOR_CUDA_DEVICE}" \
     PYTHONPATH="${REPO_ROOT}/examples/robomme:${REPO_ROOT}/src:${REPO_ROOT}/packages/openpi-client/src:${REPO_ROOT}" \
     "${BENCHMARK_PYTHON}" examples/robomme/eval.py \
     --args.host=127.0.0.1 \

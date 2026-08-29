@@ -181,6 +181,43 @@ def test_every_smoke_launcher_passes_shell_syntax_and_cpu_dry_run():
         assert "Dry run only" in result.stdout
 
 
+def test_development_smoke_launcher_preserves_slurm_gpu_allocation():
+    launcher = REPO / "experiments/keyframe_oracle_sampling/run_smoke.sbatch"
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "2,3"}
+    result = subprocess.run(
+        ["bash", str(launcher), "--gpu-binding-dry-run"],
+        cwd=REPO,
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.stdout.strip() == "2\t3"
+
+    source = launcher.read_text()
+    assert 'CUDA_VISIBLE_DEVICES="${POLICY_CUDA_DEVICE}"' in source
+    assert 'CUDA_VISIBLE_DEVICES="${SIMULATOR_CUDA_DEVICE}"' in source
+    assert "CUDA_VISIBLE_DEVICES=0" not in source
+    assert "CUDA_VISIBLE_DEVICES=1" not in source
+
+
+@pytest.mark.parametrize("visible_devices", ["", "0", "0,0", "0,1,2"])
+def test_development_smoke_launcher_rejects_invalid_gpu_allocations(
+    visible_devices,
+):
+    launcher = REPO / "experiments/keyframe_oracle_sampling/run_smoke.sbatch"
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": visible_devices}
+    result = subprocess.run(
+        ["bash", str(launcher), "--gpu-binding-dry-run"],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode != 0
+
+
 @pytest.mark.parametrize(
     "module",
     (
