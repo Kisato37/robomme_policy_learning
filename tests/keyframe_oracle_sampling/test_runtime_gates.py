@@ -166,6 +166,58 @@ def test_architecture_pass_validator_rejects_stale_unpadded_or_action_contract(
         )
 
 
+def test_architecture_compile_cache_allows_only_two_released_dtype_specializations(
+    tmp_path,
+):
+    report = _architecture_pass(tmp_path)
+    u16, u64, o16 = report["cases"][:3]
+    assert u16["first"]["compile_cache"] == {
+        "vision_before": 0,
+        "vision_after": 1,
+        "memory_before": 0,
+        "memory_after": 1,
+        "sample_before": 0,
+        "sample_after": 1,
+    }
+    assert u64["first"]["compile_cache"] == {
+        "vision_before": 1,
+        "vision_after": 1,
+        "memory_before": 1,
+        "memory_after": 2,
+        "sample_before": 1,
+        "sample_after": 2,
+    }
+    assert o16["first"]["compile_cache"]["memory_before"] == 2
+    assert o16["first"]["compile_cache"]["memory_after"] == 2
+    validate_architecture_pass_report(
+        report,
+        run_root=tmp_path,
+        architecture_submission=_architecture_submission(tmp_path),
+    )
+
+
+def test_architecture_validator_rejects_selector_induced_third_specialization(
+    tmp_path,
+):
+    report = _architecture_pass(tmp_path)
+    selector_case_index = 2
+    selector_case = report["cases"][selector_case_index]
+    selector_case["first"]["compile_cache"]["memory_after"] += 1
+    selector_case["repeat"]["compile_cache"]["memory_before"] += 1
+    selector_case["repeat"]["compile_cache"]["memory_after"] += 1
+    for case in report["cases"][selector_case_index + 1 :]:
+        for repetition in ("first", "repeat"):
+            case[repetition]["compile_cache"]["memory_before"] += 1
+            case[repetition]["compile_cache"]["memory_after"] += 1
+    report["stable_compile_cache"]["perceptual_memory"] += 1
+    with pytest.raises(ArtifactContractError, match="unexpected compilation-cache"):
+        validate_architecture_pass_report(
+            report,
+            run_root=tmp_path,
+            architecture_submission=_architecture_submission(tmp_path),
+        )
+
+
 def test_smoke_submitter_rejects_vacuous_architecture_pass(tmp_path, monkeypatch):
     run_root = tmp_path / "run"
     protocol = run_root / "protocol"

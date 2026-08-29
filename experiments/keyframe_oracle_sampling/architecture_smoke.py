@@ -266,14 +266,6 @@ def _dry_contract_case(arm: str, history_length: int) -> dict[str, Any]:
         "action_dtype": EXPECTED_ACTION_DTYPE,
         "action_finite": True,
         "action_sha256": _dry_contract_digest(f"{arm}-{history_length}-action"),
-        "compile_cache": {
-            "vision_before": 1,
-            "vision_after": 1,
-            "memory_before": 1,
-            "memory_after": 1,
-            "sample_before": 1,
-            "sample_after": 1,
-        },
         "checks": checks,
     }
     return {
@@ -289,11 +281,47 @@ def _dry_contract_case(arm: str, history_length: int) -> dict[str, Any]:
         "released_action_shape_match": True,
         "released_action_dtype_match": True,
         "compile_cache_stable_after_first_inference": True,
+        "compile_cache_matches_released_dtype_specializations": True,
         "passed": True,
     }
 
 
+def _dry_contract_cases() -> tuple[list[dict[str, Any]], dict[str, int]]:
+    cases: list[dict[str, Any]] = []
+    seen_component_dtypes: set[tuple[str, ...]] = set()
+    cache_after = {"vision": 0, "memory": 0, "sample": 0}
+    for arm in ARMS:
+        for history_length in HISTORY_LENGTHS:
+            case = _dry_contract_case(arm, history_length)
+            dtype_contract = tuple(case["first"]["component_dtypes"])
+            cache_before = dict(cache_after)
+            cache_after = {
+                "vision": cache_before["vision"] + int(not cases),
+                "memory": cache_before["memory"]
+                + int(dtype_contract not in seen_component_dtypes),
+                "sample": cache_before["sample"]
+                + int(dtype_contract not in seen_component_dtypes),
+            }
+            case["first"]["compile_cache"] = {
+                f"{component}_{side}": value
+                for component in ("vision", "memory", "sample")
+                for side, value in (
+                    ("before", cache_before[component]),
+                    ("after", cache_after[component]),
+                )
+            }
+            case["repeat"]["compile_cache"] = {
+                f"{component}_{side}": cache_after[component]
+                for component in ("vision", "memory", "sample")
+                for side in ("before", "after")
+            }
+            seen_component_dtypes.add(dtype_contract)
+            cases.append(case)
+    return cases, cache_after
+
+
 def _dry_run_contract_example(run_root: Path) -> dict[str, Any]:
+    cases, stable_cache = _dry_contract_cases()
     return {
         "passed": True,
         "repository_commit_sha": "0" * 40,
@@ -303,11 +331,7 @@ def _dry_run_contract_example(run_root: Path) -> dict[str, Any]:
         "run_root": str(run_root),
         "slurm_job_id": "dry-run-job",
         "case_count": 8,
-        "cases": [
-            _dry_contract_case(arm, history_length)
-            for arm in ARMS
-            for history_length in HISTORY_LENGTHS
-        ],
+        "cases": cases,
         "reference_component_shapes": [
             list(shape) for shape in EXPECTED_COMPONENT_SHAPES
         ],
@@ -319,9 +343,9 @@ def _dry_run_contract_example(run_root: Path) -> dict[str, Any]:
         "reference_action_shape": list(EXPECTED_ACTION_SHAPE),
         "reference_action_dtype": EXPECTED_ACTION_DTYPE,
         "stable_compile_cache": {
-            "vision": 1,
-            "perceptual_memory": 1,
-            "sample_actions": 1,
+            "vision": stable_cache["vision"],
+            "perceptual_memory": stable_cache["memory"],
+            "sample_actions": stable_cache["sample"],
         },
         "final_reset_evidence": _dry_contract_reset(),
     }
@@ -403,6 +427,47 @@ def _cache_size(function: Any) -> int:
     if jitted is None or not hasattr(jitted, "_cache_size"):
         raise RuntimeError("Cannot audit the module_jit compilation cache")
     return int(jitted._cache_size())
+
+
+def _compile_cache_contract(
+    first: dict[str, Any],
+    repeat: dict[str, Any],
+    *,
+    previous_after: dict[str, int],
+    seen_component_dtypes: set[tuple[str, ...]],
+) -> tuple[bool, bool, dict[str, int], tuple[str, ...]]:
+    components = ("vision", "memory", "sample")
+    first_before = {
+        component: first["compile_cache"][f"{component}_before"]
+        for component in components
+    }
+    first_after = {
+        component: first["compile_cache"][f"{component}_after"]
+        for component in components
+    }
+    repeat_before = {
+        component: repeat["compile_cache"][f"{component}_before"]
+        for component in components
+    }
+    repeat_after = {
+        component: repeat["compile_cache"][f"{component}_after"]
+        for component in components
+    }
+    repeat_stable = first_after == repeat_before == repeat_after
+    dtype_contract = tuple(first["component_dtypes"])
+    expected_growth = {
+        "vision": int(not seen_component_dtypes),
+        "memory": int(dtype_contract not in seen_component_dtypes),
+        "sample": int(dtype_contract not in seen_component_dtypes),
+    }
+    expected_after = {
+        component: previous_after[component] + expected_growth[component]
+        for component in components
+    }
+    specialization_match = (
+        first_before == previous_after and first_after == expected_after
+    )
+    return repeat_stable, specialization_match, repeat_after, dtype_contract
 
 
 def _reset_snapshot(policy: Any) -> dict[str, Any]:
@@ -745,9 +810,8 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
     )
     capture = _capture_memory_prepare(policy)
     cases = report.setdefault("cases", [])
-    stable_vision_cache: int | None = None
-    stable_memory_cache: int | None = None
-    stable_sample_cache: int | None = None
+    seen_component_dtypes: set[tuple[str, ...]] = set()
+    compile_cache_after = {"vision": 0, "memory": 0, "sample": 0}
 
     for arm in ARMS:
         for history_length in HISTORY_LENGTHS:
@@ -759,10 +823,6 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
                 seeds=seeds,
                 seed_table_contract=seed_table_contract,
             )
-            if stable_vision_cache is None:
-                stable_vision_cache = first["compile_cache"]["vision_after"]
-                stable_memory_cache = first["compile_cache"]["memory_after"]
-                stable_sample_cache = first["compile_cache"]["sample_after"]
             repeat = _run_once(
                 policy,
                 capture,
@@ -771,15 +831,16 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
                 seeds=seeds,
                 seed_table_contract=seed_table_contract,
             )
-            compile_stable = all(
-                (
-                    first["compile_cache"]["vision_after"] == stable_vision_cache,
-                    first["compile_cache"]["memory_after"] == stable_memory_cache,
-                    first["compile_cache"]["sample_after"] == stable_sample_cache,
-                    repeat["compile_cache"]["vision_after"] == stable_vision_cache,
-                    repeat["compile_cache"]["memory_after"] == stable_memory_cache,
-                    repeat["compile_cache"]["sample_after"] == stable_sample_cache,
-                )
+            (
+                compile_stable,
+                compile_specialization_match,
+                next_compile_cache_after,
+                dtype_contract,
+            ) = _compile_cache_contract(
+                first,
+                repeat,
+                previous_after=compile_cache_after,
+                seen_component_dtypes=seen_component_dtypes,
             )
             evidence = {
                 "arm": arm,
@@ -811,6 +872,9 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
                 == EXPECTED_ACTION_DTYPE
                 and repeat["action_dtype"] == EXPECTED_ACTION_DTYPE,
                 "compile_cache_stable_after_first_inference": compile_stable,
+                "compile_cache_matches_released_dtype_specializations": (
+                    compile_specialization_match
+                ),
             }
             evidence["passed"] = all(
                 (
@@ -821,11 +885,16 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
                     evidence["released_action_shape_match"],
                     evidence["released_action_dtype_match"],
                     evidence["compile_cache_stable_after_first_inference"],
+                    evidence[
+                        "compile_cache_matches_released_dtype_specializations"
+                    ],
                 )
             )
             cases.append(evidence)
             if not evidence["passed"]:
                 raise RuntimeError(f"Repeat/isolation gate failed for {arm}/{history_length}")
+            compile_cache_after = next_compile_cache_after
+            seen_component_dtypes.add(dtype_contract)
 
     policy.reset()
     final_reset = _reset_snapshot(policy)
@@ -857,9 +926,9 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
             "reference_action_shape": list(EXPECTED_ACTION_SHAPE),
             "reference_action_dtype": EXPECTED_ACTION_DTYPE,
             "stable_compile_cache": {
-                "vision": stable_vision_cache,
-                "perceptual_memory": stable_memory_cache,
-                "sample_actions": stable_sample_cache,
+                "vision": compile_cache_after["vision"],
+                "perceptual_memory": compile_cache_after["memory"],
+                "sample_actions": compile_cache_after["sample"],
             },
             "final_reset_evidence": final_reset,
         }

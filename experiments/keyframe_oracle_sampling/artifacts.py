@@ -210,16 +210,31 @@ def validate_architecture_pass_report(
         source="GPU architecture report references",
     )
 
-    observed: list[tuple[Any, Any]] = []
-    observed_stable_caches: list[tuple[int, int, int]] = []
+    if case_count != len(expected) or len(cases) != len(expected):
+        raise ArtifactContractError(
+            "GPU architecture report does not contain exactly eight cases"
+        )
+    if any(not isinstance(case, Mapping) for case in cases):
+        raise ArtifactContractError("GPU architecture report contains a non-object case")
+    observed = [(case.get("arm"), case.get("history_length")) for case in cases]
+    expected_order = [
+        (arm, history_length)
+        for arm in ARCHITECTURE_ARMS
+        for history_length in ARCHITECTURE_HISTORY_LENGTHS
+    ]
+    if observed != expected_order:
+        raise ArtifactContractError(
+            "GPU architecture report does not contain the canonical unique "
+            "U/O/OC/R x H16/H64 execution order"
+        )
+
+    seen_component_dtypes: set[tuple[str, ...]] = set()
+    expected_compile_cache = {"vision": 0, "memory": 0, "sample": 0}
     for case in cases:
-        if not isinstance(case, Mapping):
-            raise ArtifactContractError("GPU architecture report contains a non-object case")
         if case.get("passed") is not True:
             raise ArtifactContractError("GPU architecture report contains a failed case")
         arm = case.get("arm")
         history_length = case.get("history_length")
-        observed.append((arm, history_length))
         if (arm, history_length) not in expected:
             raise ArtifactContractError(
                 "GPU architecture report contains an unknown arm/history case"
@@ -232,6 +247,7 @@ def validate_architecture_pass_report(
             "released_action_shape_match",
             "released_action_dtype_match",
             "compile_cache_stable_after_first_inference",
+            "compile_cache_matches_released_dtype_specializations",
         )
         if any(case.get(field) is not True for field in required_case_flags):
             raise ArtifactContractError(
@@ -343,38 +359,58 @@ def validate_architecture_pass_report(
             != repeat["final_memory_tensor_sha256"]
         ):
             raise ArtifactContractError("GPU architecture repeat changed memory bytes")
-        stable_cache = []
-        for component in ("vision", "memory", "sample"):
-            first_after = first["compile_cache"][f"{component}_after"]
-            if not (
-                first_after
-                == repeat["compile_cache"][f"{component}_before"]
-                == repeat["compile_cache"][f"{component}_after"]
-            ):
-                raise ArtifactContractError(
-                    "GPU architecture compilation cache was not stable on repeat"
-                )
-            stable_cache.append(first_after)
-        observed_stable_caches.append(tuple(stable_cache))
-    if case_count != len(expected) or len(cases) != len(expected):
+        components = ("vision", "memory", "sample")
+        first_before = {
+            component: first["compile_cache"][f"{component}_before"]
+            for component in components
+        }
+        first_after = {
+            component: first["compile_cache"][f"{component}_after"]
+            for component in components
+        }
+        repeat_before = {
+            component: repeat["compile_cache"][f"{component}_before"]
+            for component in components
+        }
+        repeat_after = {
+            component: repeat["compile_cache"][f"{component}_after"]
+            for component in components
+        }
+        if first_after != repeat_before or repeat_before != repeat_after:
+            raise ArtifactContractError(
+                "GPU architecture compilation cache was not stable on repeat"
+            )
+        dtype_contract = tuple(expected_component_dtypes)
+        expected_growth = {
+            "vision": int(not seen_component_dtypes),
+            "memory": int(dtype_contract not in seen_component_dtypes),
+            "sample": int(dtype_contract not in seen_component_dtypes),
+        }
+        expected_after = {
+            component: expected_compile_cache[component]
+            + expected_growth[component]
+            for component in components
+        }
+        if first_before != expected_compile_cache or first_after != expected_after:
+            raise ArtifactContractError(
+                "GPU architecture has an unexpected compilation-cache transition "
+                "outside the released padded/unpadded dtype specializations"
+            )
+        expected_compile_cache = repeat_after
+        seen_component_dtypes.add(dtype_contract)
+    expected_dtype_contracts = {
+        released_prepared_component_dtypes(1),
+        released_prepared_component_dtypes(32),
+    }
+    if seen_component_dtypes != expected_dtype_contracts:
         raise ArtifactContractError(
-            "GPU architecture report does not contain exactly eight cases"
+            "GPU architecture did not exercise both released dtype specializations"
         )
-    if len(set(observed)) != len(observed) or set(observed) != expected:
-        raise ArtifactContractError(
-            "GPU architecture report does not contain the unique U/O/OC/R x H16/H64 matrix"
-        )
-    if len(set(observed_stable_caches)) != 1:
-        raise ArtifactContractError(
-            "GPU architecture compilation caches changed across arm/history cases"
-        )
-    expected_stable_cache = dict(
-        zip(
-            ("vision", "perceptual_memory", "sample_actions"),
-            observed_stable_caches[0],
-            strict=True,
-        )
-    )
+    expected_stable_cache = {
+        "vision": expected_compile_cache["vision"],
+        "perceptual_memory": expected_compile_cache["memory"],
+        "sample_actions": expected_compile_cache["sample"],
+    }
     if report.get("stable_compile_cache") != expected_stable_cache:
         raise ArtifactContractError(
             "GPU architecture top-level compilation cache summary is inconsistent"
