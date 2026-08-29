@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=keyframe-smoke
-#SBATCH --partition=athena-small
+#SBATCH --partition=athena
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:2

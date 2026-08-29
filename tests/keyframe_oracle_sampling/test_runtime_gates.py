@@ -589,6 +589,9 @@ def test_launchers_use_pinned_policy_python_and_runtime_gate():
     assert "python3 -m experiments.keyframe_oracle_sampling" not in architecture
     assert '"${POLICY_PYTHON}" -m experiments.keyframe_oracle_sampling' in smoke
     assert '"${POLICY_PYTHON}" -m experiments.keyframe_oracle_sampling' in architecture
+    assert "#SBATCH --partition=athena" in smoke
+    assert "#SBATCH --partition=athena" in architecture
+    assert "athena|athena-mini" in architecture
 
 
 def test_clean_worktree_gates_exclude_only_protocol_artifact_namespaces():

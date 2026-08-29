@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=keyframe-arch
-#SBATCH --partition=athena-mini
+#SBATCH --partition=athena
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
@@ -58,10 +58,13 @@ if [[ ! -x "${BENCHMARK_PYTHON}" ]]; then
   echo "Missing benchmark virtual environment: ${BENCHMARK_PYTHON}" >&2
   exit 2
 fi
-if [[ "${SLURM_JOB_PARTITION:-}" != "athena-mini" ]]; then
-  echo "Hard stop: expected athena-mini, got ${SLURM_JOB_PARTITION:-unset}" >&2
-  exit 2
-fi
+case "${SLURM_JOB_PARTITION:-}" in
+  athena|athena-mini) ;;
+  *)
+    echo "Hard stop: expected athena or athena-mini, got ${SLURM_JOB_PARTITION:-unset}" >&2
+    exit 2
+    ;;
+esac
 cd "${REPO_ROOT}"
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export JAX_EXPLAIN_CACHE_MISSES=true
