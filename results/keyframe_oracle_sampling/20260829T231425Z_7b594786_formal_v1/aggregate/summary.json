@@ -1,0 +1,2355 @@
+{
+  "aggregate_schema_version": 1,
+  "analysis_seed": 2026082502,
+  "artifact_provenance": {
+    "aggregation_commit_sha": "ac77b3ca3983875cbbc588ab6156107f9c284443",
+    "aggregator_source_sha256": "923b21442b3bb60e5ee8c0679d3dd19e9d42576711db84df4c6090523ef69ec9",
+    "analysis_source_sha256": "6701389635e3c5d969f05d926e51d40be5e275a57a674b366571c635b21603a1",
+    "architecture_report_sha256": "e4f9fa6579d25321dff13e4df384d83261a808f9bbb1ef4fb32e9e9e1283d3ae",
+    "checkpoint_content_tree_algorithm": "sha256-canonical-file-content-tree-v1",
+    "checkpoint_id": 79999,
+    "checkpoint_path": "runs/test_time_scaling/checkpoints/perceptual-framesamp-modul/79999",
+    "checkpoint_unpacked_content_tree_sha256": "d25ea735413db4a2a52febe95128ed158c550501fe4edee4ec6b78049b6d3fbf",
+    "checkpoint_unpacked_metadata_sha256": "313e483ae32881e606402365a8b01a599eda22a367e436f9dfbd5456120dca26",
+    "development_smoke_audit_sha256": "fc1b7c95d0c4b7d7e5353e31a27f31dbef80a6e26c1872b6e5fba6f768d9729e",
+    "formal_commit_is_ancestor": true,
+    "formal_evaluation_commit_sha": "7b59478619db222eefcd30575e268e1384f75953",
+    "formal_matrix_sha256": "2b33b0675cb356870afb561b23a76a039217b17b24a6a8580cbe85f69458effb",
+    "formal_seed_table_entries_sha256": "296dbd435906a0affe4239472b0805894aa2e97c01c4f1f093212cc27cdef65b",
+    "formal_seed_table_file_sha256": "3504daef03a6339c21e24ca5900158f6fac5f77a211b7e8143aefb75bc0d1a5a",
+    "launch_manifest_sha256": "60ddbf2c114c3581d0cbeea6a973cb5c5600a94c1628b77804276b7e2e50cd05",
+    "prior_exposure_manifest_sha256": "66a65dd1345691228a440cf4c76ce81daad406d444c94f9d9d445173c5a49b6c",
+    "protocol_sha256": "4a1eaa39ef941e3788cd9e9beaba96bfab629310d06ddd2e5555d21d0bdc0046",
+    "seed_disjointness_audit": {
+      "formal_seed_count": 65600,
+      "intersection_count": 0,
+      "smoke_seed_count": 1312
+    }
+  },
+  "bootstrap_replicates": 100000,
+  "decision_classification": "decisive_test_time_no_go",
+  "decision_rule": {
+    "beats_definition": "the corresponding 95% CI lower bound is greater than 0",
+    "classification": "decisive_test_time_no_go",
+    "coverage_complementarity_evidence": true,
+    "decisive_test_time_no_go": true,
+    "not_distinguished_definition": "the corresponding 95% CI contains 0 (lower <= 0 <= upper)",
+    "oc_beats_r": false,
+    "oc_beats_u": false,
+    "oc_not_distinguished_from_r": true,
+    "overlap_handling": "report every satisfied preregistered condition; no unregistered priority is imposed",
+    "practical_effect_threshold_pp": 3.0,
+    "sampling_sensitivity_only": false,
+    "satisfied_prespecified_conclusions": [
+      "decisive_test_time_no_go"
+    ],
+    "semantic_selection_go": false
+  },
+  "formal_cell_count": 3200,
+  "frozen_bootstrap_replicates": 100000,
+  "frozen_randomization_replicates": 100000,
+  "frozen_replicate_contract_met": true,
+  "generated_utc": "2026-09-02T02:44:41.902041Z",
+  "inferential_analysis_status": "complete_confirmatory",
+  "nonconfirmatory_decision_preview": null,
+  "numpy_version": "1.26.4",
+  "outcome_diagnostics": {
+    "collision_count_by_arm": {
+      "O": 0,
+      "OC": 0,
+      "R": 0,
+      "U": 0
+    },
+    "policy_call_count_by_arm": {
+      "O": 28934,
+      "OC": 15246,
+      "R": 14589,
+      "U": 14599
+    },
+    "success_count_by_arm": {
+      "O": 135,
+      "OC": 319,
+      "R": 337,
+      "U": 369
+    },
+    "terminal_reason_count_by_arm": {
+      "O": {
+        "fail": 452,
+        "success": 135,
+        "timeout": 213
+      },
+      "OC": {
+        "fail": 452,
+        "success": 319,
+        "timeout": 29
+      },
+      "R": {
+        "fail": 434,
+        "success": 337,
+        "timeout": 29
+      },
+      "U": {
+        "fail": 404,
+        "success": 369,
+        "timeout": 27
+      }
+    }
+  },
+  "primary": {
+    "comparison": "OC - U",
+    "confidence_interval_95": {
+      "confidence_level": 0.95,
+      "episode_resampling": "paired episodes sampled with replacement independently within each sampled task occurrence",
+      "implementation_chunk_size": 2048,
+      "lower": -0.12625,
+      "lower_pp": -12.625,
+      "method": "paired hierarchical percentile bootstrap",
+      "per_task_episode_counts": {
+        "BinFill": 50,
+        "ButtonUnmask": 50,
+        "ButtonUnmaskSwap": 50,
+        "InsertPeg": 50,
+        "MoveCube": 50,
+        "PatternLock": 50,
+        "PickHighlight": 50,
+        "PickXtimes": 50,
+        "RouteStick": 50,
+        "StopCube": 50,
+        "SwingXtimes": 50,
+        "VideoPlaceButton": 50,
+        "VideoPlaceOrder": 50,
+        "VideoRepick": 50,
+        "VideoUnmask": 50,
+        "VideoUnmaskSwap": 50
+      },
+      "percentile_bounds": [
+        2.5,
+        97.5
+      ],
+      "quantile_method": "numpy-linear",
+      "replicates": 100000,
+      "rng_implementation": "numpy.random.Generator(PCG64)",
+      "seed": 2026082502,
+      "task_count": 16,
+      "task_resampling": "tasks sampled with replacement with equal probability",
+      "upper": -0.005,
+      "upper_pp": -0.5
+    },
+    "control": "U",
+    "control_equal_task_weighted_success_rate": 0.46125,
+    "estimate": -0.0625,
+    "estimate_pp": -6.25,
+    "paired_episode_count": 800,
+    "per_task": [
+      {
+        "control_success_rate": 0.42,
+        "paired_difference": 0.06,
+        "paired_difference_pp": 6.0,
+        "paired_episode_count": 50,
+        "task": "BinFill",
+        "treatment_success_rate": 0.48
+      },
+      {
+        "control_success_rate": 0.5,
+        "paired_difference": -0.33999999999999997,
+        "paired_difference_pp": -34.0,
+        "paired_episode_count": 50,
+        "task": "StopCube",
+        "treatment_success_rate": 0.16
+      },
+      {
+        "control_success_rate": 0.96,
+        "paired_difference": -0.17999999999999994,
+        "paired_difference_pp": -17.999999999999993,
+        "paired_episode_count": 50,
+        "task": "PickXtimes",
+        "treatment_success_rate": 0.78
+      },
+      {
+        "control_success_rate": 0.9,
+        "paired_difference": 0.020000000000000018,
+        "paired_difference_pp": 2.0000000000000018,
+        "paired_episode_count": 50,
+        "task": "SwingXtimes",
+        "treatment_success_rate": 0.92
+      },
+      {
+        "control_success_rate": 0.22,
+        "paired_difference": 0.04000000000000001,
+        "paired_difference_pp": 4.000000000000001,
+        "paired_episode_count": 50,
+        "task": "ButtonUnmask",
+        "treatment_success_rate": 0.26
+      },
+      {
+        "control_success_rate": 0.38,
+        "paired_difference": -0.020000000000000018,
+        "paired_difference_pp": -2.0000000000000018,
+        "paired_episode_count": 50,
+        "task": "VideoUnmask",
+        "treatment_success_rate": 0.36
+      },
+      {
+        "control_success_rate": 0.3,
+        "paired_difference": -0.06,
+        "paired_difference_pp": -6.0,
+        "paired_episode_count": 50,
+        "task": "VideoUnmaskSwap",
+        "treatment_success_rate": 0.24
+      },
+      {
+        "control_success_rate": 0.12,
+        "paired_difference": 0.1,
+        "paired_difference_pp": 10.0,
+        "paired_episode_count": 50,
+        "task": "ButtonUnmaskSwap",
+        "treatment_success_rate": 0.22
+      },
+      {
+        "control_success_rate": 0.28,
+        "paired_difference": 0.0,
+        "paired_difference_pp": 0.0,
+        "paired_episode_count": 50,
+        "task": "PickHighlight",
+        "treatment_success_rate": 0.28
+      },
+      {
+        "control_success_rate": 0.34,
+        "paired_difference": -0.22000000000000003,
+        "paired_difference_pp": -22.000000000000004,
+        "paired_episode_count": 50,
+        "task": "VideoRepick",
+        "treatment_success_rate": 0.12
+      },
+      {
+        "control_success_rate": 0.5,
+        "paired_difference": -0.03999999999999998,
+        "paired_difference_pp": -3.9999999999999982,
+        "paired_episode_count": 50,
+        "task": "VideoPlaceButton",
+        "treatment_success_rate": 0.46
+      },
+      {
+        "control_success_rate": 0.44,
+        "paired_difference": -0.08000000000000002,
+        "paired_difference_pp": -8.000000000000002,
+        "paired_episode_count": 50,
+        "task": "VideoPlaceOrder",
+        "treatment_success_rate": 0.36
+      },
+      {
+        "control_success_rate": 0.76,
+        "paired_difference": -0.06000000000000005,
+        "paired_difference_pp": -6.000000000000005,
+        "paired_episode_count": 50,
+        "task": "MoveCube",
+        "treatment_success_rate": 0.7
+      },
+      {
+        "control_success_rate": 0.06,
+        "paired_difference": -0.019999999999999997,
+        "paired_difference_pp": -1.9999999999999998,
+        "paired_episode_count": 50,
+        "task": "InsertPeg",
+        "treatment_success_rate": 0.04
+      },
+      {
+        "control_success_rate": 0.54,
+        "paired_difference": -0.040000000000000036,
+        "paired_difference_pp": -4.0000000000000036,
+        "paired_episode_count": 50,
+        "task": "PatternLock",
+        "treatment_success_rate": 0.5
+      },
+      {
+        "control_success_rate": 0.66,
+        "paired_difference": -0.16000000000000003,
+        "paired_difference_pp": -16.000000000000004,
+        "paired_episode_count": 50,
+        "task": "RouteStick",
+        "treatment_success_rate": 0.5
+      }
+    ],
+    "randomization_test": {
+      "equal_task_weighting": true,
+      "extreme_permutation_count": 0,
+      "finite_permutation_correction": "(1 + extreme_count) / (replicates + 1)",
+      "implementation_chunk_size": 4096,
+      "method": "paired two-sided label-swap randomization test",
+      "observed_estimate": -0.0625,
+      "observed_estimate_pp": -6.25,
+      "p_value": 9.99990000099999e-06,
+      "paired_block_count": 800,
+      "per_task_episode_counts": {
+        "BinFill": 50,
+        "ButtonUnmask": 50,
+        "ButtonUnmaskSwap": 50,
+        "InsertPeg": 50,
+        "MoveCube": 50,
+        "PatternLock": 50,
+        "PickHighlight": 50,
+        "PickXtimes": 50,
+        "RouteStick": 50,
+        "StopCube": 50,
+        "SwingXtimes": 50,
+        "VideoPlaceButton": 50,
+        "VideoPlaceOrder": 50,
+        "VideoRepick": 50,
+        "VideoUnmask": 50,
+        "VideoUnmaskSwap": 50
+      },
+      "replicates": 100000,
+      "rng_implementation": "numpy.random.Generator(PCG64)",
+      "seed": 2026082502,
+      "tail": "two-sided"
+    },
+    "task_count": 16,
+    "treatment": "OC",
+    "treatment_equal_task_weighted_success_rate": 0.39875
+  },
+  "primary_discordant_counts": {
+    "comparison": "OC - U",
+    "per_task": [
+      {
+        "both_fail": 24,
+        "both_success": 19,
+        "denominator": 50,
+        "task": "BinFill",
+        "treatment_fail_control_success": 2,
+        "treatment_success_control_fail": 5
+      },
+      {
+        "both_fail": 23,
+        "both_success": 6,
+        "denominator": 50,
+        "task": "StopCube",
+        "treatment_fail_control_success": 19,
+        "treatment_success_control_fail": 2
+      },
+      {
+        "both_fail": 1,
+        "both_success": 38,
+        "denominator": 50,
+        "task": "PickXtimes",
+        "treatment_fail_control_success": 10,
+        "treatment_success_control_fail": 1
+      },
+      {
+        "both_fail": 1,
+        "both_success": 42,
+        "denominator": 50,
+        "task": "SwingXtimes",
+        "treatment_fail_control_success": 3,
+        "treatment_success_control_fail": 4
+      },
+      {
+        "both_fail": 35,
+        "both_success": 9,
+        "denominator": 50,
+        "task": "ButtonUnmask",
+        "treatment_fail_control_success": 2,
+        "treatment_success_control_fail": 4
+      },
+      {
+        "both_fail": 30,
+        "both_success": 17,
+        "denominator": 50,
+        "task": "VideoUnmask",
+        "treatment_fail_control_success": 2,
+        "treatment_success_control_fail": 1
+      },
+      {
+        "both_fail": 34,
+        "both_success": 11,
+        "denominator": 50,
+        "task": "VideoUnmaskSwap",
+        "treatment_fail_control_success": 4,
+        "treatment_success_control_fail": 1
+      },
+      {
+        "both_fail": 36,
+        "both_success": 3,
+        "denominator": 50,
+        "task": "ButtonUnmaskSwap",
+        "treatment_fail_control_success": 3,
+        "treatment_success_control_fail": 8
+      },
+      {
+        "both_fail": 32,
+        "both_success": 10,
+        "denominator": 50,
+        "task": "PickHighlight",
+        "treatment_fail_control_success": 4,
+        "treatment_success_control_fail": 4
+      },
+      {
+        "both_fail": 32,
+        "both_success": 5,
+        "denominator": 50,
+        "task": "VideoRepick",
+        "treatment_fail_control_success": 12,
+        "treatment_success_control_fail": 1
+      },
+      {
+        "both_fail": 24,
+        "both_success": 22,
+        "denominator": 50,
+        "task": "VideoPlaceButton",
+        "treatment_fail_control_success": 3,
+        "treatment_success_control_fail": 1
+      },
+      {
+        "both_fail": 27,
+        "both_success": 17,
+        "denominator": 50,
+        "task": "VideoPlaceOrder",
+        "treatment_fail_control_success": 5,
+        "treatment_success_control_fail": 1
+      },
+      {
+        "both_fail": 10,
+        "both_success": 33,
+        "denominator": 50,
+        "task": "MoveCube",
+        "treatment_fail_control_success": 5,
+        "treatment_success_control_fail": 2
+      },
+      {
+        "both_fail": 46,
+        "both_success": 1,
+        "denominator": 50,
+        "task": "InsertPeg",
+        "treatment_fail_control_success": 2,
+        "treatment_success_control_fail": 1
+      },
+      {
+        "both_fail": 19,
+        "both_success": 21,
+        "denominator": 50,
+        "task": "PatternLock",
+        "treatment_fail_control_success": 6,
+        "treatment_success_control_fail": 4
+      },
+      {
+        "both_fail": 9,
+        "both_success": 17,
+        "denominator": 50,
+        "task": "RouteStick",
+        "treatment_fail_control_success": 16,
+        "treatment_success_control_fail": 8
+      }
+    ],
+    "pooled": {
+      "both_fail": 383,
+      "both_success": 271,
+      "denominator": 800,
+      "treatment_fail_control_success": 98,
+      "treatment_success_control_fail": 48
+    }
+  },
+  "prior_exposure_sensitivity": {
+    "discordant_counts": {
+      "comparison": "OC - U",
+      "per_task": [
+        {
+          "both_fail": 24,
+          "both_success": 19,
+          "denominator": 50,
+          "task": "BinFill",
+          "treatment_fail_control_success": 2,
+          "treatment_success_control_fail": 5
+        },
+        {
+          "both_fail": 23,
+          "both_success": 6,
+          "denominator": 50,
+          "task": "StopCube",
+          "treatment_fail_control_success": 19,
+          "treatment_success_control_fail": 2
+        },
+        {
+          "both_fail": 0,
+          "both_success": 38,
+          "denominator": 49,
+          "task": "PickXtimes",
+          "treatment_fail_control_success": 10,
+          "treatment_success_control_fail": 1
+        },
+        {
+          "both_fail": 1,
+          "both_success": 42,
+          "denominator": 50,
+          "task": "SwingXtimes",
+          "treatment_fail_control_success": 3,
+          "treatment_success_control_fail": 4
+        },
+        {
+          "both_fail": 35,
+          "both_success": 9,
+          "denominator": 50,
+          "task": "ButtonUnmask",
+          "treatment_fail_control_success": 2,
+          "treatment_success_control_fail": 4
+        },
+        {
+          "both_fail": 30,
+          "both_success": 17,
+          "denominator": 50,
+          "task": "VideoUnmask",
+          "treatment_fail_control_success": 2,
+          "treatment_success_control_fail": 1
+        },
+        {
+          "both_fail": 34,
+          "both_success": 11,
+          "denominator": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_fail_control_success": 4,
+          "treatment_success_control_fail": 1
+        },
+        {
+          "both_fail": 36,
+          "both_success": 3,
+          "denominator": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_fail_control_success": 3,
+          "treatment_success_control_fail": 8
+        },
+        {
+          "both_fail": 32,
+          "both_success": 10,
+          "denominator": 50,
+          "task": "PickHighlight",
+          "treatment_fail_control_success": 4,
+          "treatment_success_control_fail": 4
+        },
+        {
+          "both_fail": 32,
+          "both_success": 5,
+          "denominator": 50,
+          "task": "VideoRepick",
+          "treatment_fail_control_success": 12,
+          "treatment_success_control_fail": 1
+        },
+        {
+          "both_fail": 24,
+          "both_success": 22,
+          "denominator": 50,
+          "task": "VideoPlaceButton",
+          "treatment_fail_control_success": 3,
+          "treatment_success_control_fail": 1
+        },
+        {
+          "both_fail": 27,
+          "both_success": 17,
+          "denominator": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_fail_control_success": 5,
+          "treatment_success_control_fail": 1
+        },
+        {
+          "both_fail": 10,
+          "both_success": 33,
+          "denominator": 50,
+          "task": "MoveCube",
+          "treatment_fail_control_success": 5,
+          "treatment_success_control_fail": 2
+        },
+        {
+          "both_fail": 46,
+          "both_success": 1,
+          "denominator": 50,
+          "task": "InsertPeg",
+          "treatment_fail_control_success": 2,
+          "treatment_success_control_fail": 1
+        },
+        {
+          "both_fail": 19,
+          "both_success": 21,
+          "denominator": 50,
+          "task": "PatternLock",
+          "treatment_fail_control_success": 6,
+          "treatment_success_control_fail": 4
+        },
+        {
+          "both_fail": 9,
+          "both_success": 17,
+          "denominator": 50,
+          "task": "RouteStick",
+          "treatment_fail_control_success": 16,
+          "treatment_success_control_fail": 8
+        }
+      ],
+      "pooled": {
+        "both_fail": 382,
+        "both_success": 271,
+        "denominator": 799,
+        "treatment_fail_control_success": 98,
+        "treatment_success_control_fail": 48
+      }
+    },
+    "effect": {
+      "comparison": "OC - U",
+      "confidence_interval_95": {
+        "confidence_level": 0.95,
+        "episode_resampling": "paired episodes sampled with replacement independently within each sampled task occurrence",
+        "implementation_chunk_size": 2048,
+        "lower": -0.1265561224489796,
+        "lower_pp": -12.65561224489796,
+        "method": "paired hierarchical percentile bootstrap",
+        "per_task_episode_counts": {
+          "BinFill": 50,
+          "ButtonUnmask": 50,
+          "ButtonUnmaskSwap": 50,
+          "InsertPeg": 50,
+          "MoveCube": 50,
+          "PatternLock": 50,
+          "PickHighlight": 50,
+          "PickXtimes": 49,
+          "RouteStick": 50,
+          "StopCube": 50,
+          "SwingXtimes": 50,
+          "VideoPlaceButton": 50,
+          "VideoPlaceOrder": 50,
+          "VideoRepick": 50,
+          "VideoUnmask": 50,
+          "VideoUnmaskSwap": 50
+        },
+        "percentile_bounds": [
+          2.5,
+          97.5
+        ],
+        "quantile_method": "numpy-linear",
+        "replicates": 100000,
+        "rng_implementation": "numpy.random.Generator(PCG64)",
+        "seed": 2026082502,
+        "task_count": 16,
+        "task_resampling": "tasks sampled with replacement with equal probability",
+        "upper": -0.005000000000000001,
+        "upper_pp": -0.5000000000000001
+      },
+      "control": "U",
+      "control_equal_task_weighted_success_rate": 0.4624744897959184,
+      "estimate": -0.0627295918367347,
+      "estimate_pp": -6.2729591836734695,
+      "paired_episode_count": 799,
+      "per_task": [
+        {
+          "control_success_rate": 0.42,
+          "paired_difference": 0.06,
+          "paired_difference_pp": 6.0,
+          "paired_episode_count": 50,
+          "task": "BinFill",
+          "treatment_success_rate": 0.48
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": -0.33999999999999997,
+          "paired_difference_pp": -34.0,
+          "paired_episode_count": 50,
+          "task": "StopCube",
+          "treatment_success_rate": 0.16
+        },
+        {
+          "control_success_rate": 0.9795918367346939,
+          "paired_difference": -0.18367346938775508,
+          "paired_difference_pp": -18.36734693877551,
+          "paired_episode_count": 49,
+          "task": "PickXtimes",
+          "treatment_success_rate": 0.7959183673469388
+        },
+        {
+          "control_success_rate": 0.9,
+          "paired_difference": 0.020000000000000018,
+          "paired_difference_pp": 2.0000000000000018,
+          "paired_episode_count": 50,
+          "task": "SwingXtimes",
+          "treatment_success_rate": 0.92
+        },
+        {
+          "control_success_rate": 0.22,
+          "paired_difference": 0.04000000000000001,
+          "paired_difference_pp": 4.000000000000001,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmask",
+          "treatment_success_rate": 0.26
+        },
+        {
+          "control_success_rate": 0.38,
+          "paired_difference": -0.020000000000000018,
+          "paired_difference_pp": -2.0000000000000018,
+          "paired_episode_count": 50,
+          "task": "VideoUnmask",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.3,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.12,
+          "paired_difference": 0.1,
+          "paired_difference_pp": 10.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_success_rate": 0.22
+        },
+        {
+          "control_success_rate": 0.28,
+          "paired_difference": 0.0,
+          "paired_difference_pp": 0.0,
+          "paired_episode_count": 50,
+          "task": "PickHighlight",
+          "treatment_success_rate": 0.28
+        },
+        {
+          "control_success_rate": 0.34,
+          "paired_difference": -0.22000000000000003,
+          "paired_difference_pp": -22.000000000000004,
+          "paired_episode_count": 50,
+          "task": "VideoRepick",
+          "treatment_success_rate": 0.12
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": -0.03999999999999998,
+          "paired_difference_pp": -3.9999999999999982,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceButton",
+          "treatment_success_rate": 0.46
+        },
+        {
+          "control_success_rate": 0.44,
+          "paired_difference": -0.08000000000000002,
+          "paired_difference_pp": -8.000000000000002,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.76,
+          "paired_difference": -0.06000000000000005,
+          "paired_difference_pp": -6.000000000000005,
+          "paired_episode_count": 50,
+          "task": "MoveCube",
+          "treatment_success_rate": 0.7
+        },
+        {
+          "control_success_rate": 0.06,
+          "paired_difference": -0.019999999999999997,
+          "paired_difference_pp": -1.9999999999999998,
+          "paired_episode_count": 50,
+          "task": "InsertPeg",
+          "treatment_success_rate": 0.04
+        },
+        {
+          "control_success_rate": 0.54,
+          "paired_difference": -0.040000000000000036,
+          "paired_difference_pp": -4.0000000000000036,
+          "paired_episode_count": 50,
+          "task": "PatternLock",
+          "treatment_success_rate": 0.5
+        },
+        {
+          "control_success_rate": 0.66,
+          "paired_difference": -0.16000000000000003,
+          "paired_difference_pp": -16.000000000000004,
+          "paired_episode_count": 50,
+          "task": "RouteStick",
+          "treatment_success_rate": 0.5
+        }
+      ],
+      "task_count": 16,
+      "treatment": "OC",
+      "treatment_equal_task_weighted_success_rate": 0.39974489795918366
+    },
+    "excluded_formal_block_count": 1,
+    "label": "frozen prior-exposure sensitivity analysis",
+    "manifest_entry_count": 26
+  },
+  "protocol_analysis_blockers": [],
+  "protocol_version": "v1.0",
+  "randomization_replicates": 100000,
+  "rng_implementation": "numpy.random.Generator(PCG64)",
+  "rng_stream_policy": "initialize a fresh PCG64 stream from analysis_seed for each comparison and inferential procedure",
+  "secondary": {
+    "O - U": {
+      "comparison": "O - U",
+      "confidence_interval_95": {
+        "confidence_level": 0.95,
+        "episode_resampling": "paired episodes sampled with replacement independently within each sampled task occurrence",
+        "implementation_chunk_size": 2048,
+        "lower": -0.40874999999999995,
+        "lower_pp": -40.87499999999999,
+        "method": "paired hierarchical percentile bootstrap",
+        "per_task_episode_counts": {
+          "BinFill": 50,
+          "ButtonUnmask": 50,
+          "ButtonUnmaskSwap": 50,
+          "InsertPeg": 50,
+          "MoveCube": 50,
+          "PatternLock": 50,
+          "PickHighlight": 50,
+          "PickXtimes": 50,
+          "RouteStick": 50,
+          "StopCube": 50,
+          "SwingXtimes": 50,
+          "VideoPlaceButton": 50,
+          "VideoPlaceOrder": 50,
+          "VideoRepick": 50,
+          "VideoUnmask": 50,
+          "VideoUnmaskSwap": 50
+        },
+        "percentile_bounds": [
+          2.5,
+          97.5
+        ],
+        "quantile_method": "numpy-linear",
+        "replicates": 100000,
+        "rng_implementation": "numpy.random.Generator(PCG64)",
+        "seed": 2026082502,
+        "task_count": 16,
+        "task_resampling": "tasks sampled with replacement with equal probability",
+        "upper": -0.1825,
+        "upper_pp": -18.25
+      },
+      "control": "U",
+      "control_equal_task_weighted_success_rate": 0.46125,
+      "estimate": -0.2925,
+      "estimate_pp": -29.25,
+      "paired_episode_count": 800,
+      "per_task": [
+        {
+          "control_success_rate": 0.42,
+          "paired_difference": -0.19999999999999998,
+          "paired_difference_pp": -20.0,
+          "paired_episode_count": 50,
+          "task": "BinFill",
+          "treatment_success_rate": 0.22
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": -0.46,
+          "paired_difference_pp": -46.0,
+          "paired_episode_count": 50,
+          "task": "StopCube",
+          "treatment_success_rate": 0.04
+        },
+        {
+          "control_success_rate": 0.96,
+          "paired_difference": -0.6399999999999999,
+          "paired_difference_pp": -63.99999999999999,
+          "paired_episode_count": 50,
+          "task": "PickXtimes",
+          "treatment_success_rate": 0.32
+        },
+        {
+          "control_success_rate": 0.9,
+          "paired_difference": -0.7,
+          "paired_difference_pp": -70.0,
+          "paired_episode_count": 50,
+          "task": "SwingXtimes",
+          "treatment_success_rate": 0.2
+        },
+        {
+          "control_success_rate": 0.22,
+          "paired_difference": -0.04000000000000001,
+          "paired_difference_pp": -4.000000000000001,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmask",
+          "treatment_success_rate": 0.18
+        },
+        {
+          "control_success_rate": 0.38,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmask",
+          "treatment_success_rate": 0.32
+        },
+        {
+          "control_success_rate": 0.3,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.12,
+          "paired_difference": -0.12,
+          "paired_difference_pp": -12.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_success_rate": 0.0
+        },
+        {
+          "control_success_rate": 0.28,
+          "paired_difference": -0.10000000000000003,
+          "paired_difference_pp": -10.000000000000004,
+          "paired_episode_count": 50,
+          "task": "PickHighlight",
+          "treatment_success_rate": 0.18
+        },
+        {
+          "control_success_rate": 0.34,
+          "paired_difference": -0.34,
+          "paired_difference_pp": -34.0,
+          "paired_episode_count": 50,
+          "task": "VideoRepick",
+          "treatment_success_rate": 0.0
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": -0.15999999999999998,
+          "paired_difference_pp": -15.999999999999998,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceButton",
+          "treatment_success_rate": 0.34
+        },
+        {
+          "control_success_rate": 0.44,
+          "paired_difference": -0.24,
+          "paired_difference_pp": -24.0,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_success_rate": 0.2
+        },
+        {
+          "control_success_rate": 0.76,
+          "paired_difference": -0.44,
+          "paired_difference_pp": -44.0,
+          "paired_episode_count": 50,
+          "task": "MoveCube",
+          "treatment_success_rate": 0.32
+        },
+        {
+          "control_success_rate": 0.06,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "InsertPeg",
+          "treatment_success_rate": 0.0
+        },
+        {
+          "control_success_rate": 0.54,
+          "paired_difference": -0.46,
+          "paired_difference_pp": -46.0,
+          "paired_episode_count": 50,
+          "task": "PatternLock",
+          "treatment_success_rate": 0.08
+        },
+        {
+          "control_success_rate": 0.66,
+          "paired_difference": -0.6000000000000001,
+          "paired_difference_pp": -60.00000000000001,
+          "paired_episode_count": 50,
+          "task": "RouteStick",
+          "treatment_success_rate": 0.06
+        }
+      ],
+      "randomization_test": {
+        "equal_task_weighting": true,
+        "extreme_permutation_count": 0,
+        "finite_permutation_correction": "(1 + extreme_count) / (replicates + 1)",
+        "holm_adjusted_p_value": 3.999960000399996e-05,
+        "holm_family": "four prespecified secondary paired comparisons",
+        "holm_rank": 1,
+        "implementation_chunk_size": 4096,
+        "method": "paired two-sided label-swap randomization test",
+        "observed_estimate": -0.2925,
+        "observed_estimate_pp": -29.25,
+        "p_value": 9.99990000099999e-06,
+        "paired_block_count": 800,
+        "per_task_episode_counts": {
+          "BinFill": 50,
+          "ButtonUnmask": 50,
+          "ButtonUnmaskSwap": 50,
+          "InsertPeg": 50,
+          "MoveCube": 50,
+          "PatternLock": 50,
+          "PickHighlight": 50,
+          "PickXtimes": 50,
+          "RouteStick": 50,
+          "StopCube": 50,
+          "SwingXtimes": 50,
+          "VideoPlaceButton": 50,
+          "VideoPlaceOrder": 50,
+          "VideoRepick": 50,
+          "VideoUnmask": 50,
+          "VideoUnmaskSwap": 50
+        },
+        "replicates": 100000,
+        "rng_implementation": "numpy.random.Generator(PCG64)",
+        "seed": 2026082502,
+        "tail": "two-sided"
+      },
+      "task_count": 16,
+      "treatment": "O",
+      "treatment_equal_task_weighted_success_rate": 0.16875
+    },
+    "OC - O": {
+      "comparison": "OC - O",
+      "confidence_interval_95": {
+        "confidence_level": 0.95,
+        "episode_resampling": "paired episodes sampled with replacement independently within each sampled task occurrence",
+        "implementation_chunk_size": 2048,
+        "lower": 0.135,
+        "lower_pp": 13.5,
+        "method": "paired hierarchical percentile bootstrap",
+        "per_task_episode_counts": {
+          "BinFill": 50,
+          "ButtonUnmask": 50,
+          "ButtonUnmaskSwap": 50,
+          "InsertPeg": 50,
+          "MoveCube": 50,
+          "PatternLock": 50,
+          "PickHighlight": 50,
+          "PickXtimes": 50,
+          "RouteStick": 50,
+          "StopCube": 50,
+          "SwingXtimes": 50,
+          "VideoPlaceButton": 50,
+          "VideoPlaceOrder": 50,
+          "VideoRepick": 50,
+          "VideoUnmask": 50,
+          "VideoUnmaskSwap": 50
+        },
+        "percentile_bounds": [
+          2.5,
+          97.5
+        ],
+        "quantile_method": "numpy-linear",
+        "replicates": 100000,
+        "rng_implementation": "numpy.random.Generator(PCG64)",
+        "seed": 2026082502,
+        "task_count": 16,
+        "task_resampling": "tasks sampled with replacement with equal probability",
+        "upper": 0.33625,
+        "upper_pp": 33.625
+      },
+      "control": "O",
+      "control_equal_task_weighted_success_rate": 0.16875,
+      "estimate": 0.22999999999999998,
+      "estimate_pp": 23.0,
+      "paired_episode_count": 800,
+      "per_task": [
+        {
+          "control_success_rate": 0.22,
+          "paired_difference": 0.26,
+          "paired_difference_pp": 26.0,
+          "paired_episode_count": 50,
+          "task": "BinFill",
+          "treatment_success_rate": 0.48
+        },
+        {
+          "control_success_rate": 0.04,
+          "paired_difference": 0.12,
+          "paired_difference_pp": 12.0,
+          "paired_episode_count": 50,
+          "task": "StopCube",
+          "treatment_success_rate": 0.16
+        },
+        {
+          "control_success_rate": 0.32,
+          "paired_difference": 0.46,
+          "paired_difference_pp": 46.0,
+          "paired_episode_count": 50,
+          "task": "PickXtimes",
+          "treatment_success_rate": 0.78
+        },
+        {
+          "control_success_rate": 0.2,
+          "paired_difference": 0.72,
+          "paired_difference_pp": 72.0,
+          "paired_episode_count": 50,
+          "task": "SwingXtimes",
+          "treatment_success_rate": 0.92
+        },
+        {
+          "control_success_rate": 0.18,
+          "paired_difference": 0.08000000000000002,
+          "paired_difference_pp": 8.000000000000002,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmask",
+          "treatment_success_rate": 0.26
+        },
+        {
+          "control_success_rate": 0.32,
+          "paired_difference": 0.03999999999999998,
+          "paired_difference_pp": 3.9999999999999982,
+          "paired_episode_count": 50,
+          "task": "VideoUnmask",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.24,
+          "paired_difference": 0.0,
+          "paired_difference_pp": 0.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.0,
+          "paired_difference": 0.22,
+          "paired_difference_pp": 22.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_success_rate": 0.22
+        },
+        {
+          "control_success_rate": 0.18,
+          "paired_difference": 0.10000000000000003,
+          "paired_difference_pp": 10.000000000000004,
+          "paired_episode_count": 50,
+          "task": "PickHighlight",
+          "treatment_success_rate": 0.28
+        },
+        {
+          "control_success_rate": 0.0,
+          "paired_difference": 0.12,
+          "paired_difference_pp": 12.0,
+          "paired_episode_count": 50,
+          "task": "VideoRepick",
+          "treatment_success_rate": 0.12
+        },
+        {
+          "control_success_rate": 0.34,
+          "paired_difference": 0.12,
+          "paired_difference_pp": 12.0,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceButton",
+          "treatment_success_rate": 0.46
+        },
+        {
+          "control_success_rate": 0.2,
+          "paired_difference": 0.15999999999999998,
+          "paired_difference_pp": 15.999999999999998,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.32,
+          "paired_difference": 0.37999999999999995,
+          "paired_difference_pp": 37.99999999999999,
+          "paired_episode_count": 50,
+          "task": "MoveCube",
+          "treatment_success_rate": 0.7
+        },
+        {
+          "control_success_rate": 0.0,
+          "paired_difference": 0.04,
+          "paired_difference_pp": 4.0,
+          "paired_episode_count": 50,
+          "task": "InsertPeg",
+          "treatment_success_rate": 0.04
+        },
+        {
+          "control_success_rate": 0.08,
+          "paired_difference": 0.42,
+          "paired_difference_pp": 42.0,
+          "paired_episode_count": 50,
+          "task": "PatternLock",
+          "treatment_success_rate": 0.5
+        },
+        {
+          "control_success_rate": 0.06,
+          "paired_difference": 0.44,
+          "paired_difference_pp": 44.0,
+          "paired_episode_count": 50,
+          "task": "RouteStick",
+          "treatment_success_rate": 0.5
+        }
+      ],
+      "randomization_test": {
+        "equal_task_weighting": true,
+        "extreme_permutation_count": 0,
+        "finite_permutation_correction": "(1 + extreme_count) / (replicates + 1)",
+        "holm_adjusted_p_value": 3.999960000399996e-05,
+        "holm_family": "four prespecified secondary paired comparisons",
+        "holm_rank": 2,
+        "implementation_chunk_size": 4096,
+        "method": "paired two-sided label-swap randomization test",
+        "observed_estimate": 0.23,
+        "observed_estimate_pp": 23.0,
+        "p_value": 9.99990000099999e-06,
+        "paired_block_count": 800,
+        "per_task_episode_counts": {
+          "BinFill": 50,
+          "ButtonUnmask": 50,
+          "ButtonUnmaskSwap": 50,
+          "InsertPeg": 50,
+          "MoveCube": 50,
+          "PatternLock": 50,
+          "PickHighlight": 50,
+          "PickXtimes": 50,
+          "RouteStick": 50,
+          "StopCube": 50,
+          "SwingXtimes": 50,
+          "VideoPlaceButton": 50,
+          "VideoPlaceOrder": 50,
+          "VideoRepick": 50,
+          "VideoUnmask": 50,
+          "VideoUnmaskSwap": 50
+        },
+        "replicates": 100000,
+        "rng_implementation": "numpy.random.Generator(PCG64)",
+        "seed": 2026082502,
+        "tail": "two-sided"
+      },
+      "task_count": 16,
+      "treatment": "OC",
+      "treatment_equal_task_weighted_success_rate": 0.39875
+    },
+    "OC - R": {
+      "comparison": "OC - R",
+      "confidence_interval_95": {
+        "confidence_level": 0.95,
+        "episode_resampling": "paired episodes sampled with replacement independently within each sampled task occurrence",
+        "implementation_chunk_size": 2048,
+        "lower": -0.08125000000000002,
+        "lower_pp": -8.125000000000002,
+        "method": "paired hierarchical percentile bootstrap",
+        "per_task_episode_counts": {
+          "BinFill": 50,
+          "ButtonUnmask": 50,
+          "ButtonUnmaskSwap": 50,
+          "InsertPeg": 50,
+          "MoveCube": 50,
+          "PatternLock": 50,
+          "PickHighlight": 50,
+          "PickXtimes": 50,
+          "RouteStick": 50,
+          "StopCube": 50,
+          "SwingXtimes": 50,
+          "VideoPlaceButton": 50,
+          "VideoPlaceOrder": 50,
+          "VideoRepick": 50,
+          "VideoUnmask": 50,
+          "VideoUnmaskSwap": 50
+        },
+        "percentile_bounds": [
+          2.5,
+          97.5
+        ],
+        "quantile_method": "numpy-linear",
+        "replicates": 100000,
+        "rng_implementation": "numpy.random.Generator(PCG64)",
+        "seed": 2026082502,
+        "task_count": 16,
+        "task_resampling": "tasks sampled with replacement with equal probability",
+        "upper": 0.03125,
+        "upper_pp": 3.125
+      },
+      "control": "R",
+      "control_equal_task_weighted_success_rate": 0.42125,
+      "estimate": -0.022500000000000006,
+      "estimate_pp": -2.2500000000000004,
+      "paired_episode_count": 800,
+      "per_task": [
+        {
+          "control_success_rate": 0.44,
+          "paired_difference": 0.03999999999999998,
+          "paired_difference_pp": 3.9999999999999982,
+          "paired_episode_count": 50,
+          "task": "BinFill",
+          "treatment_success_rate": 0.48
+        },
+        {
+          "control_success_rate": 0.44,
+          "paired_difference": -0.28,
+          "paired_difference_pp": -28.000000000000004,
+          "paired_episode_count": 50,
+          "task": "StopCube",
+          "treatment_success_rate": 0.16
+        },
+        {
+          "control_success_rate": 0.74,
+          "paired_difference": 0.040000000000000036,
+          "paired_difference_pp": 4.0000000000000036,
+          "paired_episode_count": 50,
+          "task": "PickXtimes",
+          "treatment_success_rate": 0.78
+        },
+        {
+          "control_success_rate": 0.8,
+          "paired_difference": 0.12,
+          "paired_difference_pp": 12.0,
+          "paired_episode_count": 50,
+          "task": "SwingXtimes",
+          "treatment_success_rate": 0.92
+        },
+        {
+          "control_success_rate": 0.2,
+          "paired_difference": 0.06,
+          "paired_difference_pp": 6.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmask",
+          "treatment_success_rate": 0.26
+        },
+        {
+          "control_success_rate": 0.32,
+          "paired_difference": 0.03999999999999998,
+          "paired_difference_pp": 3.9999999999999982,
+          "paired_episode_count": 50,
+          "task": "VideoUnmask",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.24,
+          "paired_difference": 0.0,
+          "paired_difference_pp": 0.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.22,
+          "paired_difference": 0.0,
+          "paired_difference_pp": 0.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_success_rate": 0.22
+        },
+        {
+          "control_success_rate": 0.24,
+          "paired_difference": 0.040000000000000036,
+          "paired_difference_pp": 4.0000000000000036,
+          "paired_episode_count": 50,
+          "task": "PickHighlight",
+          "treatment_success_rate": 0.28
+        },
+        {
+          "control_success_rate": 0.16,
+          "paired_difference": -0.04000000000000001,
+          "paired_difference_pp": -4.000000000000001,
+          "paired_episode_count": 50,
+          "task": "VideoRepick",
+          "treatment_success_rate": 0.12
+        },
+        {
+          "control_success_rate": 0.52,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceButton",
+          "treatment_success_rate": 0.46
+        },
+        {
+          "control_success_rate": 0.3,
+          "paired_difference": 0.06,
+          "paired_difference_pp": 6.0,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.86,
+          "paired_difference": -0.16000000000000003,
+          "paired_difference_pp": -16.000000000000004,
+          "paired_episode_count": 50,
+          "task": "MoveCube",
+          "treatment_success_rate": 0.7
+        },
+        {
+          "control_success_rate": 0.08,
+          "paired_difference": -0.04,
+          "paired_difference_pp": -4.0,
+          "paired_episode_count": 50,
+          "task": "InsertPeg",
+          "treatment_success_rate": 0.04
+        },
+        {
+          "control_success_rate": 0.54,
+          "paired_difference": -0.040000000000000036,
+          "paired_difference_pp": -4.0000000000000036,
+          "paired_episode_count": 50,
+          "task": "PatternLock",
+          "treatment_success_rate": 0.5
+        },
+        {
+          "control_success_rate": 0.64,
+          "paired_difference": -0.14,
+          "paired_difference_pp": -14.000000000000002,
+          "paired_episode_count": 50,
+          "task": "RouteStick",
+          "treatment_success_rate": 0.5
+        }
+      ],
+      "randomization_test": {
+        "equal_task_weighting": true,
+        "extreme_permutation_count": 18088,
+        "finite_permutation_correction": "(1 + extreme_count) / (replicates + 1)",
+        "holm_adjusted_p_value": 0.18088819111808882,
+        "holm_family": "four prespecified secondary paired comparisons",
+        "holm_rank": 4,
+        "implementation_chunk_size": 4096,
+        "method": "paired two-sided label-swap randomization test",
+        "observed_estimate": -0.0225,
+        "observed_estimate_pp": -2.25,
+        "p_value": 0.18088819111808882,
+        "paired_block_count": 800,
+        "per_task_episode_counts": {
+          "BinFill": 50,
+          "ButtonUnmask": 50,
+          "ButtonUnmaskSwap": 50,
+          "InsertPeg": 50,
+          "MoveCube": 50,
+          "PatternLock": 50,
+          "PickHighlight": 50,
+          "PickXtimes": 50,
+          "RouteStick": 50,
+          "StopCube": 50,
+          "SwingXtimes": 50,
+          "VideoPlaceButton": 50,
+          "VideoPlaceOrder": 50,
+          "VideoRepick": 50,
+          "VideoUnmask": 50,
+          "VideoUnmaskSwap": 50
+        },
+        "replicates": 100000,
+        "rng_implementation": "numpy.random.Generator(PCG64)",
+        "seed": 2026082502,
+        "tail": "two-sided"
+      },
+      "task_count": 16,
+      "treatment": "OC",
+      "treatment_equal_task_weighted_success_rate": 0.39875
+    },
+    "R - U": {
+      "comparison": "R - U",
+      "confidence_interval_95": {
+        "confidence_level": 0.95,
+        "episode_resampling": "paired episodes sampled with replacement independently within each sampled task occurrence",
+        "implementation_chunk_size": 2048,
+        "lower": -0.09125,
+        "lower_pp": -9.125,
+        "method": "paired hierarchical percentile bootstrap",
+        "per_task_episode_counts": {
+          "BinFill": 50,
+          "ButtonUnmask": 50,
+          "ButtonUnmaskSwap": 50,
+          "InsertPeg": 50,
+          "MoveCube": 50,
+          "PatternLock": 50,
+          "PickHighlight": 50,
+          "PickXtimes": 50,
+          "RouteStick": 50,
+          "StopCube": 50,
+          "SwingXtimes": 50,
+          "VideoPlaceButton": 50,
+          "VideoPlaceOrder": 50,
+          "VideoRepick": 50,
+          "VideoUnmask": 50,
+          "VideoUnmaskSwap": 50
+        },
+        "percentile_bounds": [
+          2.5,
+          97.5
+        ],
+        "quantile_method": "numpy-linear",
+        "replicates": 100000,
+        "rng_implementation": "numpy.random.Generator(PCG64)",
+        "seed": 2026082502,
+        "task_count": 16,
+        "task_resampling": "tasks sampled with replacement with equal probability",
+        "upper": 0.01,
+        "upper_pp": 1.0
+      },
+      "control": "U",
+      "control_equal_task_weighted_success_rate": 0.46125,
+      "estimate": -0.04,
+      "estimate_pp": -4.0,
+      "paired_episode_count": 800,
+      "per_task": [
+        {
+          "control_success_rate": 0.42,
+          "paired_difference": 0.020000000000000018,
+          "paired_difference_pp": 2.0000000000000018,
+          "paired_episode_count": 50,
+          "task": "BinFill",
+          "treatment_success_rate": 0.44
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "StopCube",
+          "treatment_success_rate": 0.44
+        },
+        {
+          "control_success_rate": 0.96,
+          "paired_difference": -0.21999999999999997,
+          "paired_difference_pp": -21.999999999999996,
+          "paired_episode_count": 50,
+          "task": "PickXtimes",
+          "treatment_success_rate": 0.74
+        },
+        {
+          "control_success_rate": 0.9,
+          "paired_difference": -0.09999999999999998,
+          "paired_difference_pp": -9.999999999999998,
+          "paired_episode_count": 50,
+          "task": "SwingXtimes",
+          "treatment_success_rate": 0.8
+        },
+        {
+          "control_success_rate": 0.22,
+          "paired_difference": -0.01999999999999999,
+          "paired_difference_pp": -1.9999999999999991,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmask",
+          "treatment_success_rate": 0.2
+        },
+        {
+          "control_success_rate": 0.38,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmask",
+          "treatment_success_rate": 0.32
+        },
+        {
+          "control_success_rate": 0.3,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.12,
+          "paired_difference": 0.1,
+          "paired_difference_pp": 10.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_success_rate": 0.22
+        },
+        {
+          "control_success_rate": 0.28,
+          "paired_difference": -0.040000000000000036,
+          "paired_difference_pp": -4.0000000000000036,
+          "paired_episode_count": 50,
+          "task": "PickHighlight",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.34,
+          "paired_difference": -0.18000000000000002,
+          "paired_difference_pp": -18.000000000000004,
+          "paired_episode_count": 50,
+          "task": "VideoRepick",
+          "treatment_success_rate": 0.16
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": 0.020000000000000018,
+          "paired_difference_pp": 2.0000000000000018,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceButton",
+          "treatment_success_rate": 0.52
+        },
+        {
+          "control_success_rate": 0.44,
+          "paired_difference": -0.14,
+          "paired_difference_pp": -14.000000000000002,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_success_rate": 0.3
+        },
+        {
+          "control_success_rate": 0.76,
+          "paired_difference": 0.09999999999999998,
+          "paired_difference_pp": 9.999999999999998,
+          "paired_episode_count": 50,
+          "task": "MoveCube",
+          "treatment_success_rate": 0.86
+        },
+        {
+          "control_success_rate": 0.06,
+          "paired_difference": 0.020000000000000004,
+          "paired_difference_pp": 2.0000000000000004,
+          "paired_episode_count": 50,
+          "task": "InsertPeg",
+          "treatment_success_rate": 0.08
+        },
+        {
+          "control_success_rate": 0.54,
+          "paired_difference": 0.0,
+          "paired_difference_pp": 0.0,
+          "paired_episode_count": 50,
+          "task": "PatternLock",
+          "treatment_success_rate": 0.54
+        },
+        {
+          "control_success_rate": 0.66,
+          "paired_difference": -0.020000000000000018,
+          "paired_difference_pp": -2.0000000000000018,
+          "paired_episode_count": 50,
+          "task": "RouteStick",
+          "treatment_success_rate": 0.64
+        }
+      ],
+      "randomization_test": {
+        "equal_task_weighting": true,
+        "extreme_permutation_count": 786,
+        "finite_permutation_correction": "(1 + extreme_count) / (replicates + 1)",
+        "holm_adjusted_p_value": 0.015739842601573985,
+        "holm_family": "four prespecified secondary paired comparisons",
+        "holm_rank": 3,
+        "implementation_chunk_size": 4096,
+        "method": "paired two-sided label-swap randomization test",
+        "observed_estimate": -0.04,
+        "observed_estimate_pp": -4.0,
+        "p_value": 0.007869921300786993,
+        "paired_block_count": 800,
+        "per_task_episode_counts": {
+          "BinFill": 50,
+          "ButtonUnmask": 50,
+          "ButtonUnmaskSwap": 50,
+          "InsertPeg": 50,
+          "MoveCube": 50,
+          "PatternLock": 50,
+          "PickHighlight": 50,
+          "PickXtimes": 50,
+          "RouteStick": 50,
+          "StopCube": 50,
+          "SwingXtimes": 50,
+          "VideoPlaceButton": 50,
+          "VideoPlaceOrder": 50,
+          "VideoRepick": 50,
+          "VideoUnmask": 50,
+          "VideoUnmaskSwap": 50
+        },
+        "replicates": 100000,
+        "rng_implementation": "numpy.random.Generator(PCG64)",
+        "seed": 2026082502,
+        "tail": "two-sided"
+      },
+      "task_count": 16,
+      "treatment": "R",
+      "treatment_equal_task_weighted_success_rate": 0.42125
+    }
+  },
+  "secondary_holm_family": {
+    "comparisons": [
+      "O - U",
+      "OC - O",
+      "R - U",
+      "OC - R"
+    ],
+    "family_size": 4,
+    "method": "Holm step-down adjustment",
+    "results": {
+      "O - U": {
+        "holm_adjusted_p_value": 3.999960000399996e-05,
+        "holm_rank": 1,
+        "raw_p_value": 9.99990000099999e-06
+      },
+      "OC - O": {
+        "holm_adjusted_p_value": 3.999960000399996e-05,
+        "holm_rank": 2,
+        "raw_p_value": 9.99990000099999e-06
+      },
+      "OC - R": {
+        "holm_adjusted_p_value": 0.18088819111808882,
+        "holm_rank": 4,
+        "raw_p_value": 0.18088819111808882
+      },
+      "R - U": {
+        "holm_adjusted_p_value": 0.015739842601573985,
+        "holm_rank": 3,
+        "raw_p_value": 0.007869921300786993
+      }
+    }
+  },
+  "secondary_unadjusted_point_estimates": {
+    "O - U": {
+      "comparison": "O - U",
+      "control": "U",
+      "control_equal_task_weighted_success_rate": 0.46125,
+      "estimate": -0.2925,
+      "estimate_pp": -29.25,
+      "paired_episode_count": 800,
+      "per_task": [
+        {
+          "control_success_rate": 0.42,
+          "paired_difference": -0.19999999999999998,
+          "paired_difference_pp": -20.0,
+          "paired_episode_count": 50,
+          "task": "BinFill",
+          "treatment_success_rate": 0.22
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": -0.46,
+          "paired_difference_pp": -46.0,
+          "paired_episode_count": 50,
+          "task": "StopCube",
+          "treatment_success_rate": 0.04
+        },
+        {
+          "control_success_rate": 0.96,
+          "paired_difference": -0.6399999999999999,
+          "paired_difference_pp": -63.99999999999999,
+          "paired_episode_count": 50,
+          "task": "PickXtimes",
+          "treatment_success_rate": 0.32
+        },
+        {
+          "control_success_rate": 0.9,
+          "paired_difference": -0.7,
+          "paired_difference_pp": -70.0,
+          "paired_episode_count": 50,
+          "task": "SwingXtimes",
+          "treatment_success_rate": 0.2
+        },
+        {
+          "control_success_rate": 0.22,
+          "paired_difference": -0.04000000000000001,
+          "paired_difference_pp": -4.000000000000001,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmask",
+          "treatment_success_rate": 0.18
+        },
+        {
+          "control_success_rate": 0.38,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmask",
+          "treatment_success_rate": 0.32
+        },
+        {
+          "control_success_rate": 0.3,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.12,
+          "paired_difference": -0.12,
+          "paired_difference_pp": -12.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_success_rate": 0.0
+        },
+        {
+          "control_success_rate": 0.28,
+          "paired_difference": -0.10000000000000003,
+          "paired_difference_pp": -10.000000000000004,
+          "paired_episode_count": 50,
+          "task": "PickHighlight",
+          "treatment_success_rate": 0.18
+        },
+        {
+          "control_success_rate": 0.34,
+          "paired_difference": -0.34,
+          "paired_difference_pp": -34.0,
+          "paired_episode_count": 50,
+          "task": "VideoRepick",
+          "treatment_success_rate": 0.0
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": -0.15999999999999998,
+          "paired_difference_pp": -15.999999999999998,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceButton",
+          "treatment_success_rate": 0.34
+        },
+        {
+          "control_success_rate": 0.44,
+          "paired_difference": -0.24,
+          "paired_difference_pp": -24.0,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_success_rate": 0.2
+        },
+        {
+          "control_success_rate": 0.76,
+          "paired_difference": -0.44,
+          "paired_difference_pp": -44.0,
+          "paired_episode_count": 50,
+          "task": "MoveCube",
+          "treatment_success_rate": 0.32
+        },
+        {
+          "control_success_rate": 0.06,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "InsertPeg",
+          "treatment_success_rate": 0.0
+        },
+        {
+          "control_success_rate": 0.54,
+          "paired_difference": -0.46,
+          "paired_difference_pp": -46.0,
+          "paired_episode_count": 50,
+          "task": "PatternLock",
+          "treatment_success_rate": 0.08
+        },
+        {
+          "control_success_rate": 0.66,
+          "paired_difference": -0.6000000000000001,
+          "paired_difference_pp": -60.00000000000001,
+          "paired_episode_count": 50,
+          "task": "RouteStick",
+          "treatment_success_rate": 0.06
+        }
+      ],
+      "task_count": 16,
+      "treatment": "O",
+      "treatment_equal_task_weighted_success_rate": 0.16875
+    },
+    "OC - O": {
+      "comparison": "OC - O",
+      "control": "O",
+      "control_equal_task_weighted_success_rate": 0.16875,
+      "estimate": 0.22999999999999998,
+      "estimate_pp": 23.0,
+      "paired_episode_count": 800,
+      "per_task": [
+        {
+          "control_success_rate": 0.22,
+          "paired_difference": 0.26,
+          "paired_difference_pp": 26.0,
+          "paired_episode_count": 50,
+          "task": "BinFill",
+          "treatment_success_rate": 0.48
+        },
+        {
+          "control_success_rate": 0.04,
+          "paired_difference": 0.12,
+          "paired_difference_pp": 12.0,
+          "paired_episode_count": 50,
+          "task": "StopCube",
+          "treatment_success_rate": 0.16
+        },
+        {
+          "control_success_rate": 0.32,
+          "paired_difference": 0.46,
+          "paired_difference_pp": 46.0,
+          "paired_episode_count": 50,
+          "task": "PickXtimes",
+          "treatment_success_rate": 0.78
+        },
+        {
+          "control_success_rate": 0.2,
+          "paired_difference": 0.72,
+          "paired_difference_pp": 72.0,
+          "paired_episode_count": 50,
+          "task": "SwingXtimes",
+          "treatment_success_rate": 0.92
+        },
+        {
+          "control_success_rate": 0.18,
+          "paired_difference": 0.08000000000000002,
+          "paired_difference_pp": 8.000000000000002,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmask",
+          "treatment_success_rate": 0.26
+        },
+        {
+          "control_success_rate": 0.32,
+          "paired_difference": 0.03999999999999998,
+          "paired_difference_pp": 3.9999999999999982,
+          "paired_episode_count": 50,
+          "task": "VideoUnmask",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.24,
+          "paired_difference": 0.0,
+          "paired_difference_pp": 0.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.0,
+          "paired_difference": 0.22,
+          "paired_difference_pp": 22.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_success_rate": 0.22
+        },
+        {
+          "control_success_rate": 0.18,
+          "paired_difference": 0.10000000000000003,
+          "paired_difference_pp": 10.000000000000004,
+          "paired_episode_count": 50,
+          "task": "PickHighlight",
+          "treatment_success_rate": 0.28
+        },
+        {
+          "control_success_rate": 0.0,
+          "paired_difference": 0.12,
+          "paired_difference_pp": 12.0,
+          "paired_episode_count": 50,
+          "task": "VideoRepick",
+          "treatment_success_rate": 0.12
+        },
+        {
+          "control_success_rate": 0.34,
+          "paired_difference": 0.12,
+          "paired_difference_pp": 12.0,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceButton",
+          "treatment_success_rate": 0.46
+        },
+        {
+          "control_success_rate": 0.2,
+          "paired_difference": 0.15999999999999998,
+          "paired_difference_pp": 15.999999999999998,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.32,
+          "paired_difference": 0.37999999999999995,
+          "paired_difference_pp": 37.99999999999999,
+          "paired_episode_count": 50,
+          "task": "MoveCube",
+          "treatment_success_rate": 0.7
+        },
+        {
+          "control_success_rate": 0.0,
+          "paired_difference": 0.04,
+          "paired_difference_pp": 4.0,
+          "paired_episode_count": 50,
+          "task": "InsertPeg",
+          "treatment_success_rate": 0.04
+        },
+        {
+          "control_success_rate": 0.08,
+          "paired_difference": 0.42,
+          "paired_difference_pp": 42.0,
+          "paired_episode_count": 50,
+          "task": "PatternLock",
+          "treatment_success_rate": 0.5
+        },
+        {
+          "control_success_rate": 0.06,
+          "paired_difference": 0.44,
+          "paired_difference_pp": 44.0,
+          "paired_episode_count": 50,
+          "task": "RouteStick",
+          "treatment_success_rate": 0.5
+        }
+      ],
+      "task_count": 16,
+      "treatment": "OC",
+      "treatment_equal_task_weighted_success_rate": 0.39875
+    },
+    "OC - R": {
+      "comparison": "OC - R",
+      "control": "R",
+      "control_equal_task_weighted_success_rate": 0.42125,
+      "estimate": -0.022500000000000006,
+      "estimate_pp": -2.2500000000000004,
+      "paired_episode_count": 800,
+      "per_task": [
+        {
+          "control_success_rate": 0.44,
+          "paired_difference": 0.03999999999999998,
+          "paired_difference_pp": 3.9999999999999982,
+          "paired_episode_count": 50,
+          "task": "BinFill",
+          "treatment_success_rate": 0.48
+        },
+        {
+          "control_success_rate": 0.44,
+          "paired_difference": -0.28,
+          "paired_difference_pp": -28.000000000000004,
+          "paired_episode_count": 50,
+          "task": "StopCube",
+          "treatment_success_rate": 0.16
+        },
+        {
+          "control_success_rate": 0.74,
+          "paired_difference": 0.040000000000000036,
+          "paired_difference_pp": 4.0000000000000036,
+          "paired_episode_count": 50,
+          "task": "PickXtimes",
+          "treatment_success_rate": 0.78
+        },
+        {
+          "control_success_rate": 0.8,
+          "paired_difference": 0.12,
+          "paired_difference_pp": 12.0,
+          "paired_episode_count": 50,
+          "task": "SwingXtimes",
+          "treatment_success_rate": 0.92
+        },
+        {
+          "control_success_rate": 0.2,
+          "paired_difference": 0.06,
+          "paired_difference_pp": 6.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmask",
+          "treatment_success_rate": 0.26
+        },
+        {
+          "control_success_rate": 0.32,
+          "paired_difference": 0.03999999999999998,
+          "paired_difference_pp": 3.9999999999999982,
+          "paired_episode_count": 50,
+          "task": "VideoUnmask",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.24,
+          "paired_difference": 0.0,
+          "paired_difference_pp": 0.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.22,
+          "paired_difference": 0.0,
+          "paired_difference_pp": 0.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_success_rate": 0.22
+        },
+        {
+          "control_success_rate": 0.24,
+          "paired_difference": 0.040000000000000036,
+          "paired_difference_pp": 4.0000000000000036,
+          "paired_episode_count": 50,
+          "task": "PickHighlight",
+          "treatment_success_rate": 0.28
+        },
+        {
+          "control_success_rate": 0.16,
+          "paired_difference": -0.04000000000000001,
+          "paired_difference_pp": -4.000000000000001,
+          "paired_episode_count": 50,
+          "task": "VideoRepick",
+          "treatment_success_rate": 0.12
+        },
+        {
+          "control_success_rate": 0.52,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceButton",
+          "treatment_success_rate": 0.46
+        },
+        {
+          "control_success_rate": 0.3,
+          "paired_difference": 0.06,
+          "paired_difference_pp": 6.0,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_success_rate": 0.36
+        },
+        {
+          "control_success_rate": 0.86,
+          "paired_difference": -0.16000000000000003,
+          "paired_difference_pp": -16.000000000000004,
+          "paired_episode_count": 50,
+          "task": "MoveCube",
+          "treatment_success_rate": 0.7
+        },
+        {
+          "control_success_rate": 0.08,
+          "paired_difference": -0.04,
+          "paired_difference_pp": -4.0,
+          "paired_episode_count": 50,
+          "task": "InsertPeg",
+          "treatment_success_rate": 0.04
+        },
+        {
+          "control_success_rate": 0.54,
+          "paired_difference": -0.040000000000000036,
+          "paired_difference_pp": -4.0000000000000036,
+          "paired_episode_count": 50,
+          "task": "PatternLock",
+          "treatment_success_rate": 0.5
+        },
+        {
+          "control_success_rate": 0.64,
+          "paired_difference": -0.14,
+          "paired_difference_pp": -14.000000000000002,
+          "paired_episode_count": 50,
+          "task": "RouteStick",
+          "treatment_success_rate": 0.5
+        }
+      ],
+      "task_count": 16,
+      "treatment": "OC",
+      "treatment_equal_task_weighted_success_rate": 0.39875
+    },
+    "R - U": {
+      "comparison": "R - U",
+      "control": "U",
+      "control_equal_task_weighted_success_rate": 0.46125,
+      "estimate": -0.04,
+      "estimate_pp": -4.0,
+      "paired_episode_count": 800,
+      "per_task": [
+        {
+          "control_success_rate": 0.42,
+          "paired_difference": 0.020000000000000018,
+          "paired_difference_pp": 2.0000000000000018,
+          "paired_episode_count": 50,
+          "task": "BinFill",
+          "treatment_success_rate": 0.44
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "StopCube",
+          "treatment_success_rate": 0.44
+        },
+        {
+          "control_success_rate": 0.96,
+          "paired_difference": -0.21999999999999997,
+          "paired_difference_pp": -21.999999999999996,
+          "paired_episode_count": 50,
+          "task": "PickXtimes",
+          "treatment_success_rate": 0.74
+        },
+        {
+          "control_success_rate": 0.9,
+          "paired_difference": -0.09999999999999998,
+          "paired_difference_pp": -9.999999999999998,
+          "paired_episode_count": 50,
+          "task": "SwingXtimes",
+          "treatment_success_rate": 0.8
+        },
+        {
+          "control_success_rate": 0.22,
+          "paired_difference": -0.01999999999999999,
+          "paired_difference_pp": -1.9999999999999991,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmask",
+          "treatment_success_rate": 0.2
+        },
+        {
+          "control_success_rate": 0.38,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmask",
+          "treatment_success_rate": 0.32
+        },
+        {
+          "control_success_rate": 0.3,
+          "paired_difference": -0.06,
+          "paired_difference_pp": -6.0,
+          "paired_episode_count": 50,
+          "task": "VideoUnmaskSwap",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.12,
+          "paired_difference": 0.1,
+          "paired_difference_pp": 10.0,
+          "paired_episode_count": 50,
+          "task": "ButtonUnmaskSwap",
+          "treatment_success_rate": 0.22
+        },
+        {
+          "control_success_rate": 0.28,
+          "paired_difference": -0.040000000000000036,
+          "paired_difference_pp": -4.0000000000000036,
+          "paired_episode_count": 50,
+          "task": "PickHighlight",
+          "treatment_success_rate": 0.24
+        },
+        {
+          "control_success_rate": 0.34,
+          "paired_difference": -0.18000000000000002,
+          "paired_difference_pp": -18.000000000000004,
+          "paired_episode_count": 50,
+          "task": "VideoRepick",
+          "treatment_success_rate": 0.16
+        },
+        {
+          "control_success_rate": 0.5,
+          "paired_difference": 0.020000000000000018,
+          "paired_difference_pp": 2.0000000000000018,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceButton",
+          "treatment_success_rate": 0.52
+        },
+        {
+          "control_success_rate": 0.44,
+          "paired_difference": -0.14,
+          "paired_difference_pp": -14.000000000000002,
+          "paired_episode_count": 50,
+          "task": "VideoPlaceOrder",
+          "treatment_success_rate": 0.3
+        },
+        {
+          "control_success_rate": 0.76,
+          "paired_difference": 0.09999999999999998,
+          "paired_difference_pp": 9.999999999999998,
+          "paired_episode_count": 50,
+          "task": "MoveCube",
+          "treatment_success_rate": 0.86
+        },
+        {
+          "control_success_rate": 0.06,
+          "paired_difference": 0.020000000000000004,
+          "paired_difference_pp": 2.0000000000000004,
+          "paired_episode_count": 50,
+          "task": "InsertPeg",
+          "treatment_success_rate": 0.08
+        },
+        {
+          "control_success_rate": 0.54,
+          "paired_difference": 0.0,
+          "paired_difference_pp": 0.0,
+          "paired_episode_count": 50,
+          "task": "PatternLock",
+          "treatment_success_rate": 0.54
+        },
+        {
+          "control_success_rate": 0.66,
+          "paired_difference": -0.020000000000000018,
+          "paired_difference_pp": -2.0000000000000018,
+          "paired_episode_count": 50,
+          "task": "RouteStick",
+          "treatment_success_rate": 0.64
+        }
+      ],
+      "task_count": 16,
+      "treatment": "R",
+      "treatment_equal_task_weighted_success_rate": 0.42125
+    }
+  },
+  "selector_latency_by_arm": {
+    "O": {
+      "end_to_end": {
+        "count": 28934,
+        "max_ms": 125014.86396789551,
+        "mean_ms": 908.7747424565914,
+        "p50_ms": 243.79122257232666,
+        "p95_ms": 291.7411372065544,
+        "p99_ms": 24143.44184279441
+      },
+      "model": {
+        "count": 28934,
+        "max_ms": 117625.9208470583,
+        "mean_ms": 694.9254436073489,
+        "p50_ms": 110.01875437796116,
+        "p95_ms": 113.6791629716754,
+        "p99_ms": 20989.63455028829
+      },
+      "selector": {
+        "count": 28934,
+        "max_ms": 1271.4953310787678,
+        "mean_ms": 69.9513972488212,
+        "p50_ms": 76.22376084327698,
+        "p95_ms": 83.96290317177771,
+        "p99_ms": 106.38342354446635
+      }
+    },
+    "OC": {
+      "end_to_end": {
+        "count": 15246,
+        "max_ms": 71309.66451019049,
+        "mean_ms": 1819.1756178431528,
+        "p50_ms": 225.51951743662357,
+        "p95_ms": 20711.36633399874,
+        "p99_ms": 25706.643669307214
+      },
+      "model": {
+        "count": 15246,
+        "max_ms": 71069.4402270019,
+        "mean_ms": 1535.5481651539421,
+        "p50_ms": 110.19985564053059,
+        "p95_ms": 17981.001019477844,
+        "p99_ms": 22351.424496620886
+      },
+      "selector": {
+        "count": 15246,
+        "max_ms": 396.26962319016457,
+        "mean_ms": 64.88784105142756,
+        "p50_ms": 60.35320274531841,
+        "p95_ms": 115.32063409686089,
+        "p99_ms": 143.05864628404348
+      }
+    },
+    "R": {
+      "end_to_end": {
+        "count": 14589,
+        "max_ms": 134540.9698523581,
+        "mean_ms": 1878.5168122617897,
+        "p50_ms": 209.77530628442764,
+        "p95_ms": 20922.020167112343,
+        "p99_ms": 25913.952758461237
+      },
+      "model": {
+        "count": 14589,
+        "max_ms": 128934.57815796137,
+        "mean_ms": 1604.6531409578279,
+        "p50_ms": 110.18624901771545,
+        "p95_ms": 18154.22729998826,
+        "p99_ms": 22487.897988259774
+      },
+      "selector": {
+        "count": 14589,
+        "max_ms": 139.07571136951447,
+        "mean_ms": 40.72188434727728,
+        "p50_ms": 45.45567184686661,
+        "p95_ms": 51.21932551264763,
+        "p99_ms": 60.50712570548033
+      }
+    },
+    "U": {
+      "end_to_end": {
+        "count": 14599,
+        "max_ms": 75421.49153724313,
+        "mean_ms": 1874.7234322943154,
+        "p50_ms": 209.2047482728958,
+        "p95_ms": 21258.57651159167,
+        "p99_ms": 25865.59325367213
+      },
+      "model": {
+        "count": 14599,
+        "max_ms": 72694.90496441722,
+        "mean_ms": 1605.278231095107,
+        "p50_ms": 110.23213341832161,
+        "p95_ms": 18362.99296803772,
+        "p99_ms": 22684.421182721853
+      },
+      "selector": {
+        "count": 14599,
+        "max_ms": 136.40477880835533,
+        "mean_ms": 39.706313083754296,
+        "p50_ms": 44.41890865564346,
+        "p95_ms": 50.39820894598961,
+        "p99_ms": 60.44715255498887
+      }
+    }
+  },
+  "strict_audit": {
+    "formal_result_census_complete": true,
+    "infrastructure_failure_count": 57,
+    "passed": true,
+    "protocol_deviations": [],
+    "result_set_sha256": "7eee5bf81e1aef5e95589c7bea9672fc78018887f14c6e2d2fda2a280d06cedd",
+    "selector_trace_set_sha256": "bd4ed32f3744d4e4182669c93ef98aaa89b853ae054003df7865f4a32898f1aa",
+    "strict_selector_trace_audit_complete": true,
+    "unresolved_risks": []
+  }
+}

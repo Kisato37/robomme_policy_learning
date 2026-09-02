@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "run_id": "20260829T231425Z_7b594786_formal_v1",
+  "result_kind": "formal_keyframe_oracle_sampling_aggregate",
+  "original_run_root": "runs/keyframe_oracle_sampling/20260829T231425Z_7b594786_formal_v1",
+  "original_run_root_path_type": "repository_relative",
+  "source_aggregate_directory": "runs/keyframe_oracle_sampling/20260829T231425Z_7b594786_formal_v1/aggregate",
+  "published_aggregate_directory": "results/keyframe_oracle_sampling/20260829T231425Z_7b594786_formal_v1/aggregate",
+  "aggregation_code_commit": "ac77b3ca3983875cbbc588ab6156107f9c284443",
+  "aggregate_generated_utc": "2026-09-02T02:44:41.902041Z",
+  "manifest_created_utc": "2026-09-02T02:55:39Z",
+  "copy_policy": "byte-for-byte copy; source run-root artifacts were not modified",
+  "files": {
+    "aggregate/analysis.md": {
+      "size_bytes": 2105,
+      "sha256": "bd10450bbf1edf1be5b4d495a276ee8bfad2868ab3bed2a5f9147225dfae90c5"
+    },
+    "aggregate/completeness_report.json": {
+      "size_bytes": 8376,
+      "sha256": "9f58713cb8da6762c3a81fcfa1776c25bb52a1be75ed26326325ce0cec655ccc"
+    },
+    "aggregate/per_episode.csv": {
+      "size_bytes": 73335,
+      "sha256": "e1ec5d1273f3ba97b14d252a1a1668c00635a71477acca687f3e47d7e9f3a478"
+    },
+    "aggregate/per_task.csv": {
+      "size_bytes": 1931,
+      "sha256": "ef7d266c6607124e795b3e630776d0e41b5621f1ffa68f38eeb657c9491ea595"
+    },
+    "aggregate/summary.json": {
+      "size_bytes": 76101,
+      "sha256": "e3f40b7192fc1be9a3b280c30234170b63dfae26d389c9b99ba321e82e3efbe9"
+    }
+  },
+  "safety_review": {
+    "reviewed_utc": "2026-09-02T02:55:39Z",
+    "status": "passed",
+    "secret_or_credential_matches": 0,
+    "network_endpoint_matches": 0,
+    "absolute_server_path_matches": 0,
+    "notes": [
+      "No private keys, API keys, access tokens, authentication assignments, email addresses, IP addresses, URLs, hostnames, ports, or absolute server paths were detected.",
+      "The completeness report contains opaque Slurm array job IDs for provenance; it contains no node names, endpoints, or credentials."
+    ]
+  }
+}

@@ -1,0 +1,266 @@
+{
+  "attempt_count": 3257,
+  "audited_utc": "2026-09-02T02:44:41.902041Z",
+  "completed_attempt_histogram": {
+    "0": 3143,
+    "1": 57
+  },
+  "completeness": {
+    "complete": true,
+    "completed_count": 3200,
+    "expected_count": 3200,
+    "missing": [],
+    "unexpected": []
+  },
+  "failed_attempts_with_selector_trace_count": 14,
+  "failure_ledger_sha256": "412b08fc0442ac083a1fa433a5bec45f766f2cb308c453da475065add78cfff2",
+  "failure_record_schema_count": {
+    "evaluator_minimal": 14,
+    "launcher_enriched": 43
+  },
+  "formal_result_census_complete": true,
+  "infrastructure_failure_count": 57,
+  "initial_condition_fairness": {
+    "fair": true,
+    "paired_blocks": 800
+  },
+  "outcome_diagnostics": {
+    "collision_count_by_arm": {
+      "O": 0,
+      "OC": 0,
+      "R": 0,
+      "U": 0
+    },
+    "policy_call_count_by_arm": {
+      "O": 28934,
+      "OC": 15246,
+      "R": 14589,
+      "U": 14599
+    },
+    "success_count_by_arm": {
+      "O": 135,
+      "OC": 319,
+      "R": 337,
+      "U": 369
+    },
+    "terminal_reason_count_by_arm": {
+      "O": {
+        "fail": 452,
+        "success": 135,
+        "timeout": 213
+      },
+      "OC": {
+        "fail": 452,
+        "success": 319,
+        "timeout": 29
+      },
+      "R": {
+        "fail": 434,
+        "success": 337,
+        "timeout": 29
+      },
+      "U": {
+        "fail": 404,
+        "success": 369,
+        "timeout": 27
+      }
+    }
+  },
+  "paired_manifest_invariants": {
+    "invariants_match": true,
+    "paired_blocks": 800
+  },
+  "passed": true,
+  "prior_exposure_manifest_entry_count": 26,
+  "protocol_deviations": [],
+  "protocol_provenance": {
+    "aggregation_commit_sha": "ac77b3ca3983875cbbc588ab6156107f9c284443",
+    "aggregator_source_sha256": "923b21442b3bb60e5ee8c0679d3dd19e9d42576711db84df4c6090523ef69ec9",
+    "analysis_source_sha256": "6701389635e3c5d969f05d926e51d40be5e275a57a674b366571c635b21603a1",
+    "architecture_report_sha256": "e4f9fa6579d25321dff13e4df384d83261a808f9bbb1ef4fb32e9e9e1283d3ae",
+    "checkpoint_content_tree_algorithm": "sha256-canonical-file-content-tree-v1",
+    "checkpoint_id": 79999,
+    "checkpoint_path": "runs/test_time_scaling/checkpoints/perceptual-framesamp-modul/79999",
+    "checkpoint_unpacked_content_tree_sha256": "d25ea735413db4a2a52febe95128ed158c550501fe4edee4ec6b78049b6d3fbf",
+    "checkpoint_unpacked_metadata_sha256": "313e483ae32881e606402365a8b01a599eda22a367e436f9dfbd5456120dca26",
+    "development_smoke_audit_sha256": "fc1b7c95d0c4b7d7e5353e31a27f31dbef80a6e26c1872b6e5fba6f768d9729e",
+    "formal_commit_is_ancestor": true,
+    "formal_evaluation_commit_sha": "7b59478619db222eefcd30575e268e1384f75953",
+    "formal_matrix_sha256": "2b33b0675cb356870afb561b23a76a039217b17b24a6a8580cbe85f69458effb",
+    "formal_seed_table_entries_sha256": "296dbd435906a0affe4239472b0805894aa2e97c01c4f1f093212cc27cdef65b",
+    "formal_seed_table_file_sha256": "3504daef03a6339c21e24ca5900158f6fac5f77a211b7e8143aefb75bc0d1a5a",
+    "launch_manifest_sha256": "60ddbf2c114c3581d0cbeea6a973cb5c5600a94c1628b77804276b7e2e50cd05",
+    "prior_exposure_manifest_sha256": "66a65dd1345691228a440cf4c76ce81daad406d444c94f9d9d445173c5a49b6c",
+    "protocol_sha256": "4a1eaa39ef941e3788cd9e9beaba96bfab629310d06ddd2e5555d21d0bdc0046",
+    "seed_disjointness_audit": {
+      "formal_seed_count": 65600,
+      "intersection_count": 0,
+      "smoke_seed_count": 1312
+    }
+  },
+  "result_set_sha256": "7eee5bf81e1aef5e95589c7bea9672fc78018887f14c6e2d2fda2a280d06cedd",
+  "retry_row_count_by_attempt": {
+    "0": 3200,
+    "1": 57
+  },
+  "schema_version": 1,
+  "selector_latency_by_arm": {
+    "O": {
+      "end_to_end": {
+        "count": 28934,
+        "max_ms": 125014.86396789551,
+        "mean_ms": 908.7747424565914,
+        "p50_ms": 243.79122257232666,
+        "p95_ms": 291.7411372065544,
+        "p99_ms": 24143.44184279441
+      },
+      "model": {
+        "count": 28934,
+        "max_ms": 117625.9208470583,
+        "mean_ms": 694.9254436073489,
+        "p50_ms": 110.01875437796116,
+        "p95_ms": 113.6791629716754,
+        "p99_ms": 20989.63455028829
+      },
+      "selector": {
+        "count": 28934,
+        "max_ms": 1271.4953310787678,
+        "mean_ms": 69.9513972488212,
+        "p50_ms": 76.22376084327698,
+        "p95_ms": 83.96290317177771,
+        "p99_ms": 106.38342354446635
+      }
+    },
+    "OC": {
+      "end_to_end": {
+        "count": 15246,
+        "max_ms": 71309.66451019049,
+        "mean_ms": 1819.1756178431528,
+        "p50_ms": 225.51951743662357,
+        "p95_ms": 20711.36633399874,
+        "p99_ms": 25706.643669307214
+      },
+      "model": {
+        "count": 15246,
+        "max_ms": 71069.4402270019,
+        "mean_ms": 1535.5481651539421,
+        "p50_ms": 110.19985564053059,
+        "p95_ms": 17981.001019477844,
+        "p99_ms": 22351.424496620886
+      },
+      "selector": {
+        "count": 15246,
+        "max_ms": 396.26962319016457,
+        "mean_ms": 64.88784105142756,
+        "p50_ms": 60.35320274531841,
+        "p95_ms": 115.32063409686089,
+        "p99_ms": 143.05864628404348
+      }
+    },
+    "R": {
+      "end_to_end": {
+        "count": 14589,
+        "max_ms": 134540.9698523581,
+        "mean_ms": 1878.5168122617897,
+        "p50_ms": 209.77530628442764,
+        "p95_ms": 20922.020167112343,
+        "p99_ms": 25913.952758461237
+      },
+      "model": {
+        "count": 14589,
+        "max_ms": 128934.57815796137,
+        "mean_ms": 1604.6531409578279,
+        "p50_ms": 110.18624901771545,
+        "p95_ms": 18154.22729998826,
+        "p99_ms": 22487.897988259774
+      },
+      "selector": {
+        "count": 14589,
+        "max_ms": 139.07571136951447,
+        "mean_ms": 40.72188434727728,
+        "p50_ms": 45.45567184686661,
+        "p95_ms": 51.21932551264763,
+        "p99_ms": 60.50712570548033
+      }
+    },
+    "U": {
+      "end_to_end": {
+        "count": 14599,
+        "max_ms": 75421.49153724313,
+        "mean_ms": 1874.7234322943154,
+        "p50_ms": 209.2047482728958,
+        "p95_ms": 21258.57651159167,
+        "p99_ms": 25865.59325367213
+      },
+      "model": {
+        "count": 14599,
+        "max_ms": 72694.90496441722,
+        "mean_ms": 1605.278231095107,
+        "p50_ms": 110.23213341832161,
+        "p95_ms": 18362.99296803772,
+        "p99_ms": 22684.421182721853
+      },
+      "selector": {
+        "count": 14599,
+        "max_ms": 136.40477880835533,
+        "mean_ms": 39.706313083754296,
+        "p50_ms": 44.41890865564346,
+        "p95_ms": 50.39820894598961,
+        "p99_ms": 60.44715255498887
+      }
+    }
+  },
+  "selector_trace_set_sha256": "bd4ed32f3744d4e4182669c93ef98aaa89b853ae054003df7865f4a32898f1aa",
+  "strict_attempt_audit_set_sha256": "2a4befb14e258e9add00a919f3f0bde767e56eb5e55e2db3c0ec5b5a1d0ca526",
+  "strict_selector_trace_audit_complete": true,
+  "submission_audits": [
+    {
+      "attempt_id": 0,
+      "row_ids_sha256": "63bc5a849faf14bfa961abe8c2104931ee162548c76f093c0bd75c250a2bd79e",
+      "shard_count": 4,
+      "slurm_array_job_ids": [
+        "186474",
+        "186475",
+        "186476",
+        "186477"
+      ],
+      "submission_plan_sha256": "d1f5af1aac51f42c964efe84dde75eb0d785f20258077210bf21188016b563e7",
+      "submission_record_digests": [
+        {
+          "sha256": "558883a09e5770705e30fc1eaa9fe02f5df901599b84dd24c4d83c8d8d6a1156",
+          "shard_id": 0
+        },
+        {
+          "sha256": "09458af73650e6ce69e8f7d1220efead48e5a63e43c33e7c4fff0e68ab4997ec",
+          "shard_id": 1
+        },
+        {
+          "sha256": "44442f704c3fd758fbd80729a248ab610cd8cd08d5e9ef7025f57e180cbbaf70",
+          "shard_id": 2
+        },
+        {
+          "sha256": "b96015cbf345e80c3b072c762df9ab1ffe5587e32f0ed2a3b1b67736b365425f",
+          "shard_id": 3
+        }
+      ],
+      "trajectory_count": 3200
+    },
+    {
+      "attempt_id": 1,
+      "row_ids_sha256": "346e2541e3c1d191918835352c59a5d97b29e0334d13191b425d55e599b4142e",
+      "shard_count": 1,
+      "slurm_array_job_ids": [
+        "191244"
+      ],
+      "submission_plan_sha256": "7a2c64368571020ac6f0ea2380bcbacf5e76736b31d51302d8e3a3ecf717d6e4",
+      "submission_record_digests": [
+        {
+          "sha256": "337e3ab76cc3f926995499ba17f57e43032cf982e73bafdc171ddaefc1a52f6f",
+          "shard_id": 0
+        }
+      ],
+      "trajectory_count": 57
+    }
+  ],
+  "unresolved_risks": []
+}
