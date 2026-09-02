@@ -955,14 +955,17 @@ def audit_formal_run(run_root: Path, repo_root: Path) -> tuple[dict[str, Any], d
                 "episode_id": key.episode_id,
                 "arm": key.arm,
                 "trajectory_kind": "formal",
-                "formal_matrix_row_id": row_id_by_key[key],
                 "classification": "infrastructure",
                 "retry_allowed": True,
             },
             source=f"Failure-ledger record {index}",
         )
-        if type(record.get("scientific_actions_started")) is not bool:
-            raise ArtifactContractError("Failure ledger must explicitly state whether scientific actions started")
+        recorded_row_id = record.get("formal_matrix_row_id")
+        if recorded_row_id is not None and recorded_row_id != row_id_by_key[key]:
+            raise ArtifactContractError("Failure ledger records the wrong formal row")
+        recorded_actions_started = record.get("scientific_actions_started")
+        if recorded_actions_started is not None and type(recorded_actions_started) is not bool:
+            raise ArtifactContractError("Failure-ledger scientific_actions_started must be boolean when present")
         failures[identity] = dict(record)
 
     expected_attempts: set[tuple[ScientificKey, int]] = set()
@@ -999,16 +1002,34 @@ def audit_formal_run(run_root: Path, repo_root: Path) -> tuple[dict[str, Any], d
     if set(failures) != expected_failures:
         raise ArtifactContractError("Failure ledger differs from the exact set of superseded attempts")
 
+    failure_schema_counts: Counter[str] = Counter()
+    failed_attempts_with_trace = 0
     for identity, failure in failures.items():
         key, attempt_id = identity
         path, manifest = attempts[identity]
         writer = EpisodeAttemptWriter(path, key, attempt_id)
         if writer.validate_resume() != "incomplete" or writer.result_path.exists():
             raise ArtifactContractError("Failure ledger points at a completed attempt")
-        if failure.get("episode_manifest_sha256") != sha256_file(writer.manifest_path):
+        recorded_manifest_sha256 = failure.get("episode_manifest_sha256")
+        if recorded_manifest_sha256 is not None and recorded_manifest_sha256 != sha256_file(writer.manifest_path):
             raise ArtifactContractError("Failure ledger manifest digest mismatch")
-        if failure.get("slurm") != manifest.get("slurm"):
+        recorded_slurm = failure.get("slurm")
+        if recorded_slurm is not None and recorded_slurm != manifest.get("slurm"):
             raise ArtifactContractError("Failure ledger and failed manifest Slurm data differ")
+        enriched_fields = {
+            "formal_matrix_row_id",
+            "scientific_actions_started",
+            "episode_manifest_sha256",
+            "slurm",
+        }
+        failure_schema_counts["launcher_enriched" if enriched_fields.issubset(failure) else "evaluator_minimal"] += 1
+        trace_exists = writer.trace_path.exists()
+        failed_attempts_with_trace += int(trace_exists)
+        if (
+            failure.get("scientific_actions_started") is not None
+            and failure["scientific_actions_started"] != trace_exists
+        ):
+            raise ArtifactContractError("Failure-ledger scientific_actions_started disagrees with trace presence")
 
     retry_rows_by_attempt: dict[int, list[int]] = {0: list(range(FORMAL_TRAJECTORY_COUNT))}
     for attempt_id in (1, 2):
@@ -1135,6 +1156,8 @@ def audit_formal_run(run_root: Path, repo_root: Path) -> tuple[dict[str, Any], d
             str(attempt_id): attempt_histogram[attempt_id] for attempt_id in sorted(attempt_histogram)
         },
         "infrastructure_failure_count": len(failure_records),
+        "failure_record_schema_count": dict(sorted(failure_schema_counts.items())),
+        "failed_attempts_with_selector_trace_count": failed_attempts_with_trace,
         "failure_ledger_sha256": failure_ledger_sha256,
         "retry_row_count_by_attempt": {
             str(attempt_id): len(rows) for attempt_id, rows in retry_rows_by_attempt.items() if rows
