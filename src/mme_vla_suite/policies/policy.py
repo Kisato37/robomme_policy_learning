@@ -9,25 +9,25 @@ import jax.numpy as jnp
 import numpy as np
 from typing_extensions import override
 
+from mme_vla_suite.models.integration.history_observation import HistAugObservation
+from mme_vla_suite.models.integration.history_pi0 import HistoryPi0
+from mme_vla_suite.shared.keyframe_oracle_sampling import FORMAL_SEED_DATASET
+from mme_vla_suite.shared.keyframe_oracle_sampling import FORMAL_SEED_SCOPE
+from mme_vla_suite.shared.keyframe_oracle_sampling import MAX_POLICY_CALLS
+from mme_vla_suite.shared.keyframe_oracle_sampling import SMOKE_SEED_DATASET
+from mme_vla_suite.shared.keyframe_oracle_sampling import SMOKE_SEED_SCOPE
+from mme_vla_suite.shared.keyframe_oracle_sampling import SelectorArm
+from mme_vla_suite.shared.keyframe_oracle_sampling import derive_random_seed
+from mme_vla_suite.shared.keyframe_oracle_sampling import derive_smoke_random_seed
+from mme_vla_suite.shared.keyframe_oracle_sampling import oracle_neighborhood_coverage_decision
+from mme_vla_suite.shared.keyframe_oracle_sampling import parse_arm
+from mme_vla_suite.shared.keyframe_oracle_sampling import select_indices
+from mme_vla_suite.shared.mem_buffer import MemoryBuffer
+from mme_vla_suite.shared.mem_buffer import MemoryBufferRecurrent
 from openpi import transforms as _transforms
 from openpi.shared import array_typing as at
 from openpi.shared import nnx_utils
 
-from mme_vla_suite.models.integration.history_observation import HistAugObservation
-from mme_vla_suite.models.integration.history_pi0 import HistoryPi0
-from mme_vla_suite.shared.keyframe_oracle_sampling import (
-    FORMAL_SEED_DATASET,
-    FORMAL_SEED_SCOPE,
-    MAX_POLICY_CALLS,
-    SMOKE_SEED_DATASET,
-    SMOKE_SEED_SCOPE,
-    SelectorArm,
-    derive_random_seed,
-    derive_smoke_random_seed,
-    parse_arm,
-    select_indices,
-)
-from mme_vla_suite.shared.mem_buffer import MemoryBuffer, MemoryBufferRecurrent
 
 class MME_VLA_Policy:
     def __init__(
@@ -328,6 +328,7 @@ class MME_VLA_Policy:
             time.monotonic() - boundary_lookup_started
         ) * 1000
         selector_seed = config["random_seeds"][call_index] if arm is SelectorArm.RANDOM else None
+        selector_metadata: dict[str, object] = {}
         if arm is SelectorArm.OFFICIAL_UNIFORM:
             # This is the literal released runtime path, without an override.
             prepared = self.mem_buffer.prepare_frame_sampling(
@@ -340,6 +341,19 @@ class MME_VLA_Policy:
             def selector(step_idx, selected_budget, selected_token_per_image):
                 if selected_budget != 512 or selected_token_per_image != 16:
                     raise RuntimeError("Runtime frame budget changed after selector configuration")
+                if arm in {
+                    SelectorArm.ORACLE_NEIGHBORHOOD_3,
+                    SelectorArm.ORACLE_NEIGHBORHOOD_5,
+                }:
+                    selected_indices, decision = oracle_neighborhood_coverage_decision(
+                        step_idx,
+                        visible_boundaries,
+                        neighborhood_frames=(
+                            3 if arm is SelectorArm.ORACLE_NEIGHBORHOOD_3 else 5
+                        ),
+                    )
+                    selector_metadata.update(decision)
+                    return selected_indices
                 return select_indices(
                     arm,
                     step_idx,
@@ -439,6 +453,7 @@ class MME_VLA_Policy:
             "age_distribution": ages,
             "maximum_temporal_gap": max(gaps, default=0),
             "boundary_recall": boundary_recall,
+            **selector_metadata,
         }
         selector_bookkeeping_latency_ms = (
             time.monotonic() - bookkeeping_started

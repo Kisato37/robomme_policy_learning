@@ -22,10 +22,24 @@ from env_runner import EnvRunner
 from subgoal_predictor import build_subgoal_predictor, SubgoalPredictorBase
 from evaluation_records import EpisodeResultWriter
 
+from experiments.keyframe_neighborhood_sampling.formal_artifacts import (
+    EXTENSION_PROTOCOL_VERSION,
+    validate_prepared_formal_root as validate_extension_prepared_formal_root,
+    validate_prepared_smoke_root as validate_extension_prepared_smoke_root,
+)
+from experiments.keyframe_neighborhood_sampling.formal_matrix import (
+    EXTENSION_ARMS,
+    EXTENSION_PROTOCOL_FAMILY,
+    validate_formal_runtime_row_binding as validate_extension_formal_runtime_row_binding,
+)
+from experiments.keyframe_neighborhood_sampling.smoke_matrix import (
+    validate_runtime_row_binding as validate_extension_smoke_runtime_row_binding,
+)
 from experiments.keyframe_oracle_sampling.artifacts import (
     PROTOCOL_VERSION,
     RunArtifactStore,
     ScientificKey,
+    sha256_file,
     load_seed_table,
     is_retryable_infrastructure_exception,
     validate_prepared_smoke_root,
@@ -50,10 +64,46 @@ from mme_vla_suite.shared.keyframe_oracle_sampling import (
 )
 
 # qwen3-vl environment variables
-os.environ['IMAGE_MAX_TOKEN_NUM'] = '256'
-os.environ['VIDEO_MAX_TOKEN_NUM'] = '64'
-os.environ['FPS_MAX_FRAMES'] = '10'
+os.environ["IMAGE_MAX_TOKEN_NUM"] = "256"
+os.environ["VIDEO_MAX_TOKEN_NUM"] = "64"
+os.environ["FPS_MAX_FRAMES"] = "10"
 
+
+ORIGINAL_KEYFRAME_ARMS = frozenset(("U", "O", "OC", "R"))
+EXTENSION_KEYFRAME_ARMS = frozenset(EXTENSION_ARMS)
+# Preserve the completed protocol's explicit frozen identity. Attempt records
+# still copy the value from their already-validated launch manifest below.
+ORIGINAL_PROTOCOL_IDENTITY = {"protocol_version": PROTOCOL_VERSION}
+
+
+def _keyframe_protocol_route(arm: str) -> str:
+    """Return the isolated artifact contract for a canonical selector arm."""
+    canonical_arm = parse_arm(arm).value
+    if canonical_arm in ORIGINAL_KEYFRAME_ARMS:
+        return "original"
+    if canonical_arm in EXTENSION_KEYFRAME_ARMS:
+        return "extension"
+    raise ValueError(f"Selector arm has no governed experiment route: {canonical_arm!r}")
+
+
+def _keyframe_formal_validators(arm: str):
+    """Select a matching prepared-root and row-binding contract."""
+    if _keyframe_protocol_route(arm) == "extension":
+        return (
+            validate_extension_prepared_formal_root,
+            validate_extension_formal_runtime_row_binding,
+        )
+    return validate_prepared_formal_root, validate_formal_runtime_row_binding
+
+
+def _keyframe_smoke_validators(arm: str):
+    """Select the matching development-smoke artifact contract."""
+    if _keyframe_protocol_route(arm) == "extension":
+        return (
+            validate_extension_prepared_smoke_root,
+            validate_extension_smoke_runtime_row_binding,
+        )
+    return validate_prepared_smoke_root, validate_runtime_row_binding
 
 
 @dataclasses.dataclass
@@ -73,10 +123,10 @@ class Args:
     dataset: str = "test"
 
     # task control
-    re_eval_tasks: str = "" # tasks split by comma
-    only_tasks: str = "" # tasks split by comma
-    exclude_tasks: str = "" # tasks split by comma
-    episode_ids: str = "" # comma-separated explicit IDs; empty uses the full protocol
+    re_eval_tasks: str = ""  # tasks split by comma
+    only_tasks: str = ""  # tasks split by comma
+    exclude_tasks: str = ""  # tasks split by comma
+    episode_ids: str = ""  # comma-separated explicit IDs; empty uses the full protocol
 
     # VLM subgoal predictor
     use_oracle: bool = False
@@ -89,7 +139,7 @@ class Args:
     qwenvl_groundSG_adapter_path: str = "runs/ckpts/vlm_subgoal_predictor/qwenvl/grounded_subgoal/checkpoint-1200"
     qwenvl_base_model_path: str = "runs/ckpts/vlm_subgoal_predictor/qwenvl/Qwen3-VL-4B-Instruct"
     memer_adapter_path: str = "runs/ckpts/vlm_subgoal_predictor/memer/grounded_subgoal/checkpoint-1300"
-    subgoal_keep_period: int = 1 # ever subgoal should be kept for this many steps
+    subgoal_keep_period: int = 1  # ever subgoal should be kept for this many steps
     qwen_cache_dir: str = "runs/evaluation/qwen_cache"
     dual_memory_run_root: str = ""
     model_id: str = ""
@@ -108,7 +158,6 @@ class Args:
     # In our experiments, we just set this to 1
 
 
-
 def validate_keyframe_args(args: Args) -> None:
     if not args.keyframe_selector_arm and not args.keyframe_run_root:
         return
@@ -125,9 +174,7 @@ def validate_keyframe_args(args: Args) -> None:
     observed = {name: getattr(args, name) for name in frozen}
     if observed != frozen:
         raise ValueError(f"Frozen keyframe evaluation arguments changed: {observed} != {frozen}")
-    if args.subgoal_type is not None or any(
-        (args.use_oracle, args.use_qwenvl, args.use_memer, args.use_gemini)
-    ):
+    if args.subgoal_type is not None or any((args.use_oracle, args.use_qwenvl, args.use_memer, args.use_gemini)):
         raise ValueError("Keyframe arms may not add symbolic prompts or subgoal predictors")
     expected_by_kind = {
         "short": ({"val", "validation"}, 64),
@@ -137,9 +184,7 @@ def validate_keyframe_args(args: Args) -> None:
     try:
         allowed_datasets, expected_steps = expected_by_kind[args.keyframe_trajectory_kind]
     except KeyError as exc:
-        raise ValueError(
-            f"Unknown keyframe trajectory kind: {args.keyframe_trajectory_kind}"
-        ) from exc
+        raise ValueError(f"Unknown keyframe trajectory kind: {args.keyframe_trajectory_kind}") from exc
     if args.dataset not in allowed_datasets or args.max_steps != expected_steps:
         raise ValueError(
             f"{args.keyframe_trajectory_kind} requires dataset {sorted(allowed_datasets)} "
@@ -149,10 +194,7 @@ def validate_keyframe_args(args: Args) -> None:
         raise ValueError("Keyframe runs forbid exclusion and outcome-conditioned re-evaluation")
     if args.keyframe_trajectory_kind == "formal":
         digest = args.keyframe_formal_authorization
-        if (
-            len(digest) != 64
-            or any(character not in "0123456789abcdef" for character in digest)
-        ):
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
             raise RuntimeError(
                 "Direct formal keyframe evaluation is hard-disabled: the dedicated "
                 "formal launcher must supply its recorded submission digest"
@@ -168,6 +210,7 @@ class EpisodeEvaluator:
         self.attempt_writer = None
         self._seed_table_payload = None
         self._seed_lookup = None
+        self._validated_run_manifest = None
         if args.keyframe_selector_arm:
             if not args.keyframe_seed_table:
                 raise ValueError("A keyframe selector run requires --args.keyframe-seed-table")
@@ -210,18 +253,14 @@ class EpisodeEvaluator:
         video_save_dir: Path,
         pre_traj: dict | None = None,
     ) -> str:
-        client = _websocket_client_policy.MMEVLAWebsocketClientPolicy(
-            self.args.host, self.args.port
-        )
+        client = _websocket_client_policy.MMEVLAWebsocketClientPolicy(self.args.host, self.args.port)
         resp = client.reset(self._selector_config(env_runner))
         while not resp.get("reset_finished", False):
             time.sleep(0.1)
 
         epstate = EpisodeState()
-        task_goal, recorder = self.init_episode(
-            env_runner, epstate, video_save_dir, pre_traj=pre_traj
-        )
-        subgoal_predictor.start_episode(epstate, env_runner)        
+        task_goal, recorder = self.init_episode(env_runner, epstate, video_save_dir, pre_traj=pre_traj)
+        subgoal_predictor.start_episode(epstate, env_runner)
 
         img, wrist_img, robot_state = epstate.get_current_obs()
         prompt = task_goal
@@ -251,8 +290,7 @@ class EpisodeEvaluator:
                     break
 
                 action_chunk = self.get_action_chunk(
-                    client, epstate, img, wrist_img, robot_state, prompt, subgoal, 
-                    exec_horizon=self.args.obs_horizon
+                    client, epstate, img, wrist_img, robot_state, prompt, subgoal, exec_horizon=self.args.obs_horizon
                 )
                 subgoal_sequence.append(subgoal)
                 history_lengths.append(epstate.total_history_frames_sent)
@@ -294,11 +332,7 @@ class EpisodeEvaluator:
                 img,
                 wrist_img,
                 robot_state,
-                current_task_index=(
-                    env_runner.current_task_index
-                    if self.args.keyframe_selector_arm
-                    else None
-                ),
+                current_task_index=(env_runner.current_task_index if self.args.keyframe_selector_arm else None),
             )
             recorder.record(
                 image=img.copy(),
@@ -314,7 +348,9 @@ class EpisodeEvaluator:
         if success_flag == "unknown":
             return "unknown"
 
-        video_filename = f"{env_runner.env_id}_ep{env_runner.episode_id}_{success_flag}_{task_goal}_{env_runner.difficulty}.mp4"
+        video_filename = (
+            f"{env_runner.env_id}_ep{env_runner.episode_id}_{success_flag}_{task_goal}_{env_runner.difficulty}.mp4"
+        )
         recorder.save_video(video_filename)
 
         subgoal_predictor.end_episode(epstate, success_flag)
@@ -329,14 +365,10 @@ class EpisodeEvaluator:
             "collision": bool(info.get("collision", False)),
             "timeout": success_flag == "timeout",
             "benchmark_error_message": (
-                str(info.get("error_message"))
-                if success_flag == "error" and info.get("error_message")
-                else None
+                str(info.get("error_message")) if success_flag == "error" and info.get("error_message") else None
             ),
             "benchmark_exception_type": (
-                str(info.get("exception_type"))
-                if success_flag == "error" and info.get("exception_type")
-                else None
+                str(info.get("exception_type")) if success_flag == "error" and info.get("exception_type") else None
             ),
             "subgoal_sequence": subgoal_sequence,
             "history_lengths_at_policy_calls": history_lengths,
@@ -345,7 +377,6 @@ class EpisodeEvaluator:
             "video_path": str(video_save_dir / video_filename),
         }
         return success_flag
-
 
     def init_episode(
         self,
@@ -361,15 +392,9 @@ class EpisodeEvaluator:
 
         print(f"task_goal: {task_goal}")
 
-        stages = (
-            pre_traj.get("current_task_indices")
-            if self.args.keyframe_selector_arm
-            else None
-        )
+        stages = pre_traj.get("current_task_indices") if self.args.keyframe_selector_arm else None
         if self.args.keyframe_selector_arm and stages is None:
-            raise RuntimeError(
-                "Global blocker: reset demonstration has no aligned current_task_index values"
-            )
+            raise RuntimeError("Global blocker: reset demonstration has no aligned current_task_index values")
 
         if self.args.keyframe_selector_arm:
             for image, wrist_image, state, stage in zip(
@@ -417,16 +442,14 @@ class EpisodeEvaluator:
     ) -> list:
         if self.args.use_history:
             segment_length = len(state.image_buffer)
-            resp = client.add_buffer(pack_buffer(
-                state.image_buffer,
-                state.state_buffer,
-                state.exec_start_idx,
-                current_task_indices=(
-                    state.current_task_index_buffer
-                    if self.args.keyframe_selector_arm
-                    else None
-                ),
-            ))
+            resp = client.add_buffer(
+                pack_buffer(
+                    state.image_buffer,
+                    state.state_buffer,
+                    state.exec_start_idx,
+                    current_task_indices=(state.current_task_index_buffer if self.args.keyframe_selector_arm else None),
+                )
+            )
             while not resp.get("add_buffer_finished", False):
                 time.sleep(0.1)
             state.total_history_frames_sent += segment_length
@@ -441,8 +464,8 @@ class EpisodeEvaluator:
             element["keyframe_environment_step"] = int(state.count)
 
         if subgoal is not None:
-            element['simple_subgoal'] = subgoal
-            element['grounded_subgoal'] = subgoal
+            element["simple_subgoal"] = subgoal
+            element["grounded_subgoal"] = subgoal
 
         request_started = time.monotonic()
         response = client.infer(element)
@@ -459,20 +482,13 @@ class EpisodeEvaluator:
             self.attempt_writer.append_trace(selector_trace)
         action_chunk = response["actions"]
         if self.args.keyframe_selector_arm and len(action_chunk) != 20:
-            raise RuntimeError(
-                f"Frozen action proposal horizon changed: {len(action_chunk)} != 20"
-            )
+            raise RuntimeError(f"Frozen action proposal horizon changed: {len(action_chunk)} != 20")
         return action_chunk[:exec_horizon]
 
 
 def setup_save_directory(args: Args) -> Path:
     """Set up and validate save directories."""
-    save_dir = (
-        Path(args.save_dir)
-        / args.policy_name
-        / f"ckpt{args.model_ckpt_id}"
-        / f"seed{args.model_seed}"
-    )
+    save_dir = Path(args.save_dir) / args.policy_name / f"ckpt{args.model_ckpt_id}" / f"seed{args.model_seed}"
 
     if args.subgoal_type in SUBGOAL_TYPES:
         if args.use_gemini:
@@ -543,8 +559,36 @@ def _keyframe_attempt_manifest(
     as null rather than guessed.
     """
     difficulty = getattr(env_runner, "difficulty", None)
+    if evaluator._validated_run_manifest is None:
+        raise RuntimeError("Keyframe attempt manifest requires a validated run manifest")
+    protocol_version = evaluator._validated_run_manifest.get("protocol_version")
+    route = _keyframe_protocol_route(args.keyframe_selector_arm)
+    if route == "original":
+        if protocol_version != ORIGINAL_PROTOCOL_IDENTITY["protocol_version"]:
+            raise RuntimeError("Validated original run manifest changed protocol version")
+        protocol_identity = {"protocol_version": protocol_version}
+    else:
+        protocol_family = evaluator._validated_run_manifest.get("protocol_family")
+        if protocol_version != EXTENSION_PROTOCOL_VERSION or protocol_family != EXTENSION_PROTOCOL_FAMILY:
+            raise RuntimeError("Validated extension run manifest changed protocol identity")
+        protocol_identity = {
+            "protocol_version": protocol_version,
+            "protocol_family": protocol_family,
+        }
+    slurm = {
+        "job_id": os.environ.get("SLURM_JOB_ID"),
+        "array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID"),
+        "array_task_id": os.environ.get("SLURM_ARRAY_TASK_ID"),
+        "formal_matrix_row_id": os.environ.get("KEYFRAME_FORMAL_ROW_ID"),
+        "node": os.environ.get("SLURMD_NODENAME"),
+        "visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "policy_port": args.port,
+    }
+    if route == "extension" and args.keyframe_trajectory_kind != "formal":
+        slurm.pop("formal_matrix_row_id")
+        slurm["smoke_matrix_row_id"] = os.environ.get("KEYFRAME_SMOKE_ROW_ID")
     return {
-        "protocol_version": PROTOCOL_VERSION,
+        **protocol_identity,
         "dataset": env_runner.dataset,
         "max_steps": args.max_steps,
         "executed_action_horizon": args.obs_horizon,
@@ -555,15 +599,37 @@ def _keyframe_attempt_manifest(
         "resolved_difficulty_hint": env_runner.resolved_difficulty_hint,
         "difficulty": None if difficulty is None else str(difficulty),
         "environment_setup_completed": environment_setup_completed,
-        "slurm": {
-            "job_id": os.environ.get("SLURM_JOB_ID"),
-            "array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID"),
-            "array_task_id": os.environ.get("SLURM_ARRAY_TASK_ID"),
-            "formal_matrix_row_id": os.environ.get("KEYFRAME_FORMAL_ROW_ID"),
-            "node": os.environ.get("SLURMD_NODENAME"),
-            "visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
-            "policy_port": args.port,
-        },
+        "slurm": slurm,
+    }
+
+
+def _extension_failure_provenance(
+    args: Args,
+    evaluator: "EpisodeEvaluator",
+    attempt_writer,
+) -> dict[str, Any]:
+    """Bind evaluator-owned OC3/OC5 failures to immutable attempt evidence."""
+    if _keyframe_protocol_route(args.keyframe_selector_arm) != "extension":
+        return {}
+    if evaluator._validated_run_manifest is None:
+        raise RuntimeError("Extension failure provenance requires a validated run manifest")
+    manifest = json.loads(attempt_writer.manifest_path.read_text())
+    if (
+        manifest.get("protocol_version") != EXTENSION_PROTOCOL_VERSION
+        or manifest.get("protocol_family") != EXTENSION_PROTOCOL_FAMILY
+    ):
+        raise RuntimeError("Extension attempt manifest changed protocol identity")
+    row_field = "formal_matrix_row_id" if args.keyframe_trajectory_kind == "formal" else "smoke_matrix_row_id"
+    row_value = manifest.get("slurm", {}).get(row_field)
+    return {
+        "protocol_version": EXTENSION_PROTOCOL_VERSION,
+        "protocol_family": EXTENSION_PROTOCOL_FAMILY,
+        row_field: int(row_value),
+        "failure_phase": "evaluator_episode",
+        "scientific_actions_started": attempt_writer.trace_path.exists(),
+        "environment_setup_completed": manifest.get("environment_setup_completed"),
+        "episode_manifest_sha256": sha256_file(attempt_writer.manifest_path),
+        "slurm": manifest.get("slurm"),
     }
 
 
@@ -595,7 +661,8 @@ def evaluate(args: Args):
         raise ValueError("Keyframe selector arm and keyframe run root must be configured together")
     if keyframe_store is not None:
         if args.keyframe_trajectory_kind == "formal":
-            validate_prepared_formal_root(
+            prepared_validator, _ = _keyframe_formal_validators(args.keyframe_selector_arm)
+            evaluator._validated_run_manifest = prepared_validator(
                 args.keyframe_run_root,
                 args.keyframe_seed_table,
                 Path(__file__).resolve().parents[2],
@@ -603,7 +670,8 @@ def evaluate(args: Args):
                 authorization_digest=args.keyframe_formal_authorization,
             )
         else:
-            validate_prepared_smoke_root(
+            prepared_validator, _ = _keyframe_smoke_validators(args.keyframe_selector_arm)
+            evaluator._validated_run_manifest = prepared_validator(
                 args.keyframe_run_root,
                 args.keyframe_seed_table,
                 Path(__file__).resolve().parents[2],
@@ -630,9 +698,7 @@ def evaluate(args: Args):
             )
             invalid_ids = [value for value in episode_ids if value < 0 or value >= num_episodes]
             if invalid_ids:
-                raise ValueError(
-                    f"Episode IDs {invalid_ids} are outside the official range 0..{num_episodes - 1}"
-                )
+                raise ValueError(f"Episode IDs {invalid_ids} are outside the official range 0..{num_episodes - 1}")
 
             success_flag = "unknown"
 
@@ -657,11 +723,10 @@ def evaluate(args: Args):
                 )
                 try:
                     if keyframe_store is not None:
-                        row_validator = (
-                            validate_formal_runtime_row_binding
-                            if args.keyframe_trajectory_kind == "formal"
-                            else validate_runtime_row_binding
-                        )
+                        if args.keyframe_trajectory_kind == "formal":
+                            _, row_validator = _keyframe_formal_validators(args.keyframe_selector_arm)
+                        else:
+                            _, row_validator = _keyframe_smoke_validators(args.keyframe_selector_arm)
                         row_validator(
                             args.keyframe_run_root,
                             attempt_id=args.keyframe_attempt_id,
@@ -678,10 +743,7 @@ def evaluate(args: Args):
                             dataset=env_runner.dataset,
                         )
                     env_runner.make_env(episode_id)
-                    print(
-                        f"\n[robomme] env for task {task_name} episode "
-                        f"{episode_id} setup finished"
-                    )
+                    print(f"\n[robomme] env for task {task_name} episode {episode_id} setup finished")
                     if keyframe_store is not None:
                         attempt_writer = keyframe_store.new_attempt(
                             key,
@@ -699,9 +761,7 @@ def evaluate(args: Args):
                         # Exact live initial hashes are published separately,
                         # atomically, before the first policy call.
                         pre_traj = env_runner.get_init_obs()
-                        attempt_writer.record_initial_conditions(
-                            env_runner.initial_condition_hashes
-                        )
+                        attempt_writer.record_initial_conditions(env_runner.initial_condition_hashes)
                     success_flag = evaluator.eval_each_episode(
                         env_runner,
                         subgoal_predictor,
@@ -709,9 +769,7 @@ def evaluate(args: Args):
                         pre_traj=pre_traj,
                     )
                     if success_flag == "unknown":
-                        raise RuntimeError(
-                            "Subgoal/policy pipeline returned no official terminal outcome"
-                        )
+                        raise RuntimeError("Subgoal/policy pipeline returned no official terminal outcome")
                     else:
                         log_dict[task_name][episode_id] = success_flag == "success"
                         if result_writer is not None:
@@ -770,8 +828,11 @@ def evaluate(args: Args):
                                     environment_setup_completed=False,
                                 ),
                             )
-                        retry_allowed = is_retryable_infrastructure_exception(e) and (
-                            args.keyframe_attempt_id < 2
+                        retry_allowed = is_retryable_infrastructure_exception(e) and (args.keyframe_attempt_id < 2)
+                        extension_failure_provenance = _extension_failure_provenance(
+                            args,
+                            evaluator,
+                            attempt_writer,
                         )
                         keyframe_store.record_failure(
                             {
@@ -782,10 +843,9 @@ def evaluate(args: Args):
                                 "attempt_id": args.keyframe_attempt_id,
                                 "error_type": type(e).__name__,
                                 "error": str(e),
-                                "classification": (
-                                    "infrastructure" if retry_allowed else "hard_stop"
-                                ),
+                                "classification": ("infrastructure" if retry_allowed else "hard_stop"),
                                 "retry_allowed": retry_allowed,
+                                **extension_failure_provenance,
                             }
                         )
 
@@ -809,8 +869,8 @@ def evaluate(args: Args):
                 task_name: sum(log_dict[task_name].values()) / len(log_dict[task_name].values())
                 for task_name in log_dict.keys()
             }
-            final_results["total_success_rate"] = (
-                sum(final_results["success_rate"].values()) / len(final_results["success_rate"].values())
+            final_results["total_success_rate"] = sum(final_results["success_rate"].values()) / len(
+                final_results["success_rate"].values()
             )
             with open(save_dir / "log.json", "w") as f:
                 json.dump(final_results, f, indent=2)
@@ -821,4 +881,5 @@ def evaluate(args: Args):
 
 if __name__ == "__main__":
     import tyro
+
     tyro.cli(evaluate)

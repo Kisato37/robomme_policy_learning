@@ -1,0 +1,488 @@
+{
+  "arms": [
+    "OC3",
+    "OC5"
+  ],
+  "dataset": "val",
+  "episode_id": 0,
+  "order": [
+    "task",
+    "trajectory_kind",
+    "arm"
+  ],
+  "protocol_family": "keyframe_neighborhood_sampling_v1",
+  "rows": [
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 0,
+      "task": "BinFill",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 1,
+      "task": "BinFill",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 2,
+      "task": "BinFill",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 3,
+      "task": "StopCube",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 4,
+      "task": "StopCube",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 5,
+      "task": "StopCube",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 6,
+      "task": "PickXtimes",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 7,
+      "task": "PickXtimes",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 8,
+      "task": "PickXtimes",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 9,
+      "task": "SwingXtimes",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 10,
+      "task": "SwingXtimes",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 11,
+      "task": "SwingXtimes",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 12,
+      "task": "ButtonUnmask",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 13,
+      "task": "ButtonUnmask",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 14,
+      "task": "ButtonUnmask",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 15,
+      "task": "VideoUnmask",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 16,
+      "task": "VideoUnmask",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 17,
+      "task": "VideoUnmask",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 18,
+      "task": "VideoUnmaskSwap",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 19,
+      "task": "VideoUnmaskSwap",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 20,
+      "task": "VideoUnmaskSwap",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 21,
+      "task": "ButtonUnmaskSwap",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 22,
+      "task": "ButtonUnmaskSwap",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 23,
+      "task": "ButtonUnmaskSwap",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 24,
+      "task": "PickHighlight",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 25,
+      "task": "PickHighlight",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 26,
+      "task": "PickHighlight",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 27,
+      "task": "VideoRepick",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 28,
+      "task": "VideoRepick",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 29,
+      "task": "VideoRepick",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 30,
+      "task": "VideoPlaceButton",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 31,
+      "task": "VideoPlaceButton",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 32,
+      "task": "VideoPlaceButton",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 33,
+      "task": "VideoPlaceOrder",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 34,
+      "task": "VideoPlaceOrder",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 35,
+      "task": "VideoPlaceOrder",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 36,
+      "task": "MoveCube",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 37,
+      "task": "MoveCube",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 38,
+      "task": "MoveCube",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 39,
+      "task": "InsertPeg",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 40,
+      "task": "InsertPeg",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 41,
+      "task": "InsertPeg",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 42,
+      "task": "PatternLock",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 43,
+      "task": "PatternLock",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 44,
+      "task": "PatternLock",
+      "trajectory_kind": "terminal"
+    },
+    {
+      "arm": "OC3",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 45,
+      "task": "RouteStick",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 64,
+      "row_id": 46,
+      "task": "RouteStick",
+      "trajectory_kind": "short"
+    },
+    {
+      "arm": "OC5",
+      "dataset": "val",
+      "episode_id": 0,
+      "max_steps": 1300,
+      "row_id": 47,
+      "task": "RouteStick",
+      "trajectory_kind": "terminal"
+    }
+  ],
+  "schema_version": 1,
+  "short_max_steps": 64,
+  "tasks": [
+    "BinFill",
+    "StopCube",
+    "PickXtimes",
+    "SwingXtimes",
+    "ButtonUnmask",
+    "VideoUnmask",
+    "VideoUnmaskSwap",
+    "ButtonUnmaskSwap",
+    "PickHighlight",
+    "VideoRepick",
+    "VideoPlaceButton",
+    "VideoPlaceOrder",
+    "MoveCube",
+    "InsertPeg",
+    "PatternLock",
+    "RouteStick"
+  ],
+  "terminal_arms": {
+    "BinFill": "OC3",
+    "ButtonUnmask": "OC3",
+    "ButtonUnmaskSwap": "OC5",
+    "InsertPeg": "OC5",
+    "MoveCube": "OC3",
+    "PatternLock": "OC3",
+    "PickHighlight": "OC3",
+    "PickXtimes": "OC3",
+    "RouteStick": "OC5",
+    "StopCube": "OC5",
+    "SwingXtimes": "OC5",
+    "VideoPlaceButton": "OC3",
+    "VideoPlaceOrder": "OC5",
+    "VideoRepick": "OC5",
+    "VideoUnmask": "OC5",
+    "VideoUnmaskSwap": "OC3"
+  },
+  "terminal_max_steps": 1300,
+  "trajectory_count": 48
+}

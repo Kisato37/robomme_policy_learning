@@ -58,7 +58,10 @@ FORMAL_TASKS = (
     "PatternLock",
     "RouteStick",
 )
-ALL_ARMS = tuple(arm.value for arm in SelectorArm)
+# The completed v1.0 experiment is immutable. New selector enum members belong
+# to separately versioned follow-up protocols and must never silently expand the
+# original 3,200-cell matrix or its aggregation contract.
+ALL_ARMS = ("U", "O", "OC", "R")
 ARCHITECTURE_ARMS = ("U", "O", "OC", "R")
 ARCHITECTURE_HISTORY_LENGTHS = (16, 64)
 SEED_TABLE_SCHEMA_VERSION = 2

@@ -6,18 +6,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from mme_vla_suite.policies.policy import MME_VLA_Policy
 from mme_vla_suite.models.representation.percep_mem import PerceptualMemory
-from mme_vla_suite.shared.keyframe_oracle_sampling import (
-    FORMAL_SEED_DATASET,
-    FORMAL_SEED_SCOPE,
-    SMOKE_SEED_DATASET,
-    SMOKE_SEED_SCOPE,
-    SelectorArm,
-    derive_random_seed,
-    derive_smoke_random_seed,
-    official_uniform_indices,
-)
+from mme_vla_suite.policies.policy import MME_VLA_Policy
+from mme_vla_suite.shared.keyframe_oracle_sampling import FORMAL_SEED_DATASET
+from mme_vla_suite.shared.keyframe_oracle_sampling import FORMAL_SEED_SCOPE
+from mme_vla_suite.shared.keyframe_oracle_sampling import SMOKE_SEED_DATASET
+from mme_vla_suite.shared.keyframe_oracle_sampling import SMOKE_SEED_SCOPE
+from mme_vla_suite.shared.keyframe_oracle_sampling import SelectorArm
+from mme_vla_suite.shared.keyframe_oracle_sampling import derive_random_seed
+from mme_vla_suite.shared.keyframe_oracle_sampling import derive_smoke_random_seed
+from mme_vla_suite.shared.keyframe_oracle_sampling import official_uniform_indices
 from mme_vla_suite.shared.mem_buffer import MemoryBuffer
 
 
@@ -101,6 +99,29 @@ def test_policy_selector_latency_includes_boundary_lookup_and_bookkeeping(monkey
     assert trace["selector_decision_latency_ms"] == pytest.approx(30.0)
     assert trace["selector_bookkeeping_latency_ms"] == pytest.approx(20.0)
     assert trace["selector_latency_ms"] == pytest.approx(60.0)
+
+
+@pytest.mark.parametrize(
+    ("arm", "requested_frames"),
+    [
+        (SelectorArm.ORACLE_NEIGHBORHOOD_3, 3),
+        (SelectorArm.ORACLE_NEIGHBORHOOD_5, 5),
+    ],
+)
+def test_neighborhood_runtime_trace_records_selector_decision(arm, requested_frames):
+    buffer = _fixture_buffer(64, stages=[index // 8 for index in range(64)])
+    policy = _fixture_policy(arm, buffer)
+    policy._prepare_experiment_frame_sampling(
+        buffer.default_history_feats_gather_fn, 512, 16
+    )
+    trace = policy._pending_selector_trace
+    assert trace["requested_neighborhood_frames"] == requested_frames
+    assert trace["requested_neighborhood_offsets"] == (
+        [-2, 0, 2] if requested_frames == 3 else [-4, -2, 0, 2, 4]
+    )
+    assert trace["effective_neighborhood_frames"] in {3, 5}
+    assert trace["boundary_core_indices"] == trace["visible_boundary_indices"]
+    assert set(trace["effective_neighborhood_candidates"]).issubset(range(64))
 
 
 def test_temporary_override_restores_after_success_and_exception():

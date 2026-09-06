@@ -6,13 +6,12 @@ It contains no model, simulator, H5, or outcome access.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 import enum
 import hashlib
 import json
-from collections.abc import Iterable, Sequence
 
 import numpy as np
-
 
 MAX_HISTORY_FRAMES = 32
 MASTER_SELECTOR_SEED = 2026082501
@@ -29,6 +28,8 @@ class SelectorArm(str, enum.Enum):
     ORACLE_ONLY = "O"
     ORACLE_COVERAGE = "OC"
     RANDOM = "R"
+    ORACLE_NEIGHBORHOOD_3 = "OC3"
+    ORACLE_NEIGHBORHOOD_5 = "OC5"
 
 
 def parse_arm(value: str | SelectorArm) -> SelectorArm:
@@ -44,6 +45,12 @@ def parse_arm(value: str | SelectorArm) -> SelectorArm:
         "OC": SelectorArm.ORACLE_COVERAGE,
         "Oracle+Coverage": SelectorArm.ORACLE_COVERAGE,
         "OracleCoverage": SelectorArm.ORACLE_COVERAGE,
+        "OC3": SelectorArm.ORACLE_NEIGHBORHOOD_3,
+        "OC-3": SelectorArm.ORACLE_NEIGHBORHOOD_3,
+        "Oracle+Neighborhood3+Coverage": SelectorArm.ORACLE_NEIGHBORHOOD_3,
+        "OC5": SelectorArm.ORACLE_NEIGHBORHOOD_5,
+        "OC-5": SelectorArm.ORACLE_NEIGHBORHOOD_5,
+        "Oracle+Neighborhood5+Coverage": SelectorArm.ORACLE_NEIGHBORHOOD_5,
         "R": SelectorArm.RANDOM,
         "RandomSamp": SelectorArm.RANDOM,
     }
@@ -156,6 +163,23 @@ def oracle_coverage_indices(
     step_idx = _validate_step_idx(step_idx)
     target_count = min(max_frames, step_idx + 1)
     selected = set(oracle_only_indices(step_idx, boundary_indices, max_frames))
+    return _farthest_time_coverage_fill(
+        selected,
+        step_idx=step_idx,
+        target_count=target_count,
+        max_frames=max_frames,
+    )
+
+
+def _farthest_time_coverage_fill(
+    selected: Iterable[int],
+    *,
+    step_idx: int,
+    target_count: int,
+    max_frames: int,
+) -> list[int]:
+    """Fill remaining slots using the frozen OC farthest-time rule."""
+    selected = set(_ordered_unique_indices(selected, step_idx=step_idx))
     if not selected:
         selected.add(0)
 
@@ -174,6 +198,171 @@ def oracle_coverage_indices(
         step_idx,
         max_frames=max_frames,
         expected_count=target_count,
+    )
+
+
+def _boundary_neighborhood_core(
+    boundary_core: Sequence[int],
+    *,
+    step_idx: int,
+    offsets: Sequence[int],
+    max_frames: int,
+) -> list[int]:
+    """Build a causal boundary neighborhood, preserving boundaries before context.
+
+    When the requested neighborhood exceeds the frame budget, every boundary in
+    ``boundary_core`` is retained and the remaining neighborhood candidates are
+    deterministically thinned across their chronological order.
+    """
+    core = _ordered_unique_indices(boundary_core, step_idx=step_idx)
+    if len(core) > max_frames:  # pragma: no cover - callers construct a capped core
+        raise ValueError("Boundary core exceeds the memory frame budget")
+    neighborhood = {
+        boundary + offset
+        for boundary in core
+        for offset in offsets
+        if 0 <= boundary + offset <= step_idx
+    }
+    neighborhood.update(core)
+    if len(neighborhood) <= max_frames:
+        return sorted(neighborhood)
+
+    context_candidates = sorted(neighborhood.difference(core))
+    remaining = max_frames - len(core)
+    return sorted([*core, *even_thin(context_candidates, remaining)])
+
+
+def _causal_neighborhood_indices(
+    boundaries: Iterable[int],
+    *,
+    step_idx: int,
+    offsets: Sequence[int],
+) -> list[int]:
+    visible = _ordered_unique_indices(boundaries, step_idx=step_idx)
+    return sorted(
+        {
+            boundary + offset
+            for boundary in visible
+            for offset in offsets
+            if 0 <= boundary + offset <= step_idx
+        }
+    )
+
+
+def oracle_neighborhood_coverage_decision(
+    step_idx: int,
+    boundary_indices: Iterable[int],
+    *,
+    neighborhood_frames: int,
+    max_frames: int = MAX_HISTORY_FRAMES,
+) -> tuple[list[int], dict[str, object]]:
+    """Boundary neighborhoods followed by the frozen OC temporal coverage fill.
+
+    ``neighborhood_frames=3`` preserves offsets ``(-2, 0, +2)`` around each
+    causal boundary. ``neighborhood_frames=5`` first requests offsets
+    ``(-4, -2, 0, +2, +4)``; if their unique union exceeds the budget, it
+    falls back wholesale to the three-frame neighborhood. In either arm, a
+    still-overfull three-frame neighborhood retains the boundary core first and
+    evenly thins only the +/-2 context candidates.
+    """
+    step_idx = _validate_step_idx(step_idx)
+    if max_frames <= 0:
+        raise ValueError("max_frames must be positive")
+    if neighborhood_frames not in (3, 5):
+        raise ValueError("neighborhood_frames must be 3 or 5")
+
+    target_count = min(max_frames, step_idx + 1)
+    visible_boundaries = _ordered_unique_indices(boundary_indices, step_idx=step_idx)
+    boundary_core = even_thin(visible_boundaries, max_frames)
+    three_offsets = (-2, 0, 2)
+    requested_offsets = (-4, -2, 0, 2, 4) if neighborhood_frames == 5 else three_offsets
+    requested_candidates = _causal_neighborhood_indices(
+        visible_boundaries,
+        step_idx=step_idx,
+        offsets=requested_offsets,
+    )
+    fell_back_to_three = neighborhood_frames == 5 and len(requested_candidates) > max_frames
+
+    if fell_back_to_three:
+        effective_candidates = _causal_neighborhood_indices(
+            visible_boundaries,
+            step_idx=step_idx,
+            offsets=three_offsets,
+        )
+        effective_neighborhood_frames = 3
+    else:
+        effective_candidates = requested_candidates
+        effective_neighborhood_frames = neighborhood_frames
+
+    secondary_thinning = len(effective_candidates) > max_frames
+    if secondary_thinning:
+        selected = _boundary_neighborhood_core(
+            boundary_core,
+            step_idx=step_idx,
+            offsets=three_offsets,
+            max_frames=max_frames,
+        )
+    else:
+        selected = effective_candidates
+
+    final_indices = _farthest_time_coverage_fill(
+        selected,
+        step_idx=step_idx,
+        target_count=target_count,
+        max_frames=max_frames,
+    )
+    return final_indices, {
+        "requested_neighborhood_frames": neighborhood_frames,
+        "requested_neighborhood_offsets": list(requested_offsets),
+        "causal_neighborhood_candidates": requested_candidates,
+        "effective_neighborhood_frames": effective_neighborhood_frames,
+        "effective_neighborhood_candidates": effective_candidates,
+        "oc5_fell_back_to_oc3": fell_back_to_three,
+        "oc3_secondary_thinning": secondary_thinning,
+        "boundary_core_indices": boundary_core,
+        "boundary_core_thinned": len(boundary_core) < len(visible_boundaries),
+    }
+
+
+def oracle_neighborhood_coverage_indices(
+    step_idx: int,
+    boundary_indices: Iterable[int],
+    *,
+    neighborhood_frames: int,
+    max_frames: int = MAX_HISTORY_FRAMES,
+) -> list[int]:
+    selected, _ = oracle_neighborhood_coverage_decision(
+        step_idx,
+        boundary_indices,
+        neighborhood_frames=neighborhood_frames,
+        max_frames=max_frames,
+    )
+    return selected
+
+
+def oracle_neighborhood_3_coverage_indices(
+    step_idx: int,
+    boundary_indices: Iterable[int],
+    max_frames: int = MAX_HISTORY_FRAMES,
+) -> list[int]:
+    return oracle_neighborhood_coverage_indices(
+        step_idx,
+        boundary_indices,
+        neighborhood_frames=3,
+        max_frames=max_frames,
+    )
+
+
+def oracle_neighborhood_5_coverage_indices(
+    step_idx: int,
+    boundary_indices: Iterable[int],
+    max_frames: int = MAX_HISTORY_FRAMES,
+) -> list[int]:
+    return oracle_neighborhood_coverage_indices(
+        step_idx,
+        boundary_indices,
+        neighborhood_frames=5,
+        max_frames=max_frames,
     )
 
 
@@ -221,6 +410,10 @@ def select_indices(
         return oracle_only_indices(step_idx, boundary_indices)
     if arm is SelectorArm.ORACLE_COVERAGE:
         return oracle_coverage_indices(step_idx, boundary_indices)
+    if arm is SelectorArm.ORACLE_NEIGHBORHOOD_3:
+        return oracle_neighborhood_3_coverage_indices(step_idx, boundary_indices)
+    if arm is SelectorArm.ORACLE_NEIGHBORHOOD_5:
+        return oracle_neighborhood_5_coverage_indices(step_idx, boundary_indices)
     if random_seed is None:
         raise ValueError("RandomSamp requires a preregistered seed")
     return random_sampling_indices(step_idx, random_seed)
