@@ -73,6 +73,45 @@ process groups. Admission failures stop new work without an implicit GPU switch
 or retry. Preserve any partial evidence and review recovery. Sharing-induced
 latency is not a clean exclusive-device performance measurement.
 
+### Resident policy lifecycle (user-authorized 2026-09-07)
+
+Experimental validity and useful throughput take priority over releasing a GPU
+between trajectories. With `--resident-policy`, load the real checkpoint once
+per sequential development slot, retain weights and compiled functions throughout
+the batch, and release them only when the batch ends or an actual error/stop
+requires cleanup. Start-of-batch shared admission still selects sufficient free
+memory and preferably low load. Do not repeat the admission test between rows:
+the resident model's own utilization/memory is expected. Ongoing telemetry,
+combined host-memory guards, process/deadline guards and error handling remain.
+No artificial GPU load or unused VRAM reservation is introduced.
+
+Each row retains a fresh simulator process, separate result/dispatch/seed record,
+and a lightweight `policy` transport proxy with its own lifecycle. That proxy is
+not another model: it forwards msgpack requests and replies unchanged to the
+resident model, verifies the session identity and requires a configured reset
+before any history or inference request. Only one trajectory can mutate the
+resident policy at a time. The reset recreates the memory buffer, clears boundary
+metadata, selector bookkeeping and pending traces, and restores policy RNG seed
+7; it does not recreate weights or compiled functions. Wrong-row configuration,
+missing or duplicate resets and concurrent mutation fail closed.
+
+Real model start/exit/cleanup records live under `direct/sessions/<UUID>/`.
+Every row records `policy_session.json` and `resident_reset.json`, with immutable
+digests linking its transport to that session. Final audit requires the real
+session's confirmed cleanup as well as all per-row records. Per-row cleanup
+means the row-owned simulator/proxy processes are gone, not that shared weights
+were unloaded. A resident model crash stops the batch; it is not silently
+reloaded or used to rerun a scientifically valid outcome.
+
+This implementation is initially smoke-only; formal launch remains separately
+authorized after reviewing its gate. Architecture smoke additionally revisits
+case A after all other arm/shape cases and requires identical action/memory
+digests without recompilation. The complete 48-row development matrix then
+checks all task-specific resets with the persistent server. Preserve the prior
+3-row partial run unchanged; use a fresh verification root rather than merging
+old per-row-process evidence into a resident-backend PASS. These are development
+revalidation runs, never additional formal samples or outcome-selected retries.
+
 Each row uses twelve nonoverlapping allowed CPU IDs. A combined 96-GiB RSS
 guard plus a child-group watchdog limit bounds memory usage operationally.
 This is **not** a kernel Slurm/cgroup memory reservation; brief overshoot is

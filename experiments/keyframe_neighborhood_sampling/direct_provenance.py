@@ -52,6 +52,10 @@ def validate_direct_submission(submission: Mapping[str, Any], *, stage: str) -> 
         admission_policy(profile)
     except ValueError as exc:
         raise ArtifactContractError("Invalid direct GPU admission policy") from exc
+    if profile.get("policy_lifetime", "per_row") not in {"per_row", "resident"}:
+        raise ArtifactContractError("Unknown policy lifetime")
+    if profile.get("policy_lifetime") == "resident" and (layout != "colocated" or stage == "formal"):
+        raise ArtifactContractError("Resident lifecycle is currently a colocated smoke-only backend")
     if stage == "architecture_smoke":
         allocations = [submission.get("gpu_uuids")]
         width = 1
@@ -75,8 +79,12 @@ def validate_direct_submission(submission: Mapping[str, Any], *, stage: str) -> 
         occupied.update(physical)
 
 
-def dispatch_path(run_root: Path, *, stage: str, attempt_id: int, row_id: int | None) -> Path:
+def dispatch_path(run_root: Path, *, stage: str, attempt_id: int, row_id: int | None,
+                  execution_id: str | None = None) -> Path:
     root = run_root.resolve()
+    if stage == "policy_session":
+        require_uuid(execution_id, field="execution_id")
+        return root / "direct/sessions" / execution_id / "dispatch.json"
     if stage == "architecture_smoke":
         return root / "direct/architecture/dispatch.json"
     if stage not in {"development_smoke", "formal"} or type(row_id) is not int or row_id < 0:
@@ -104,7 +112,8 @@ def _load_runner(envelope: Mapping[str, Any], run_root: Path) -> tuple[DirectDis
         raise ArtifactContractError("Direct runner lacks dispatch identity")
     dispatch = DirectDispatch.from_record(envelope["dispatch"])
     root = run_root.resolve()
-    path = dispatch_path(root, stage=dispatch.stage, attempt_id=dispatch.attempt_id, row_id=dispatch.row_id)
+    path = dispatch_path(root, stage=dispatch.stage, attempt_id=dispatch.attempt_id, row_id=dispatch.row_id,
+                         execution_id=dispatch.execution_id)
     if envelope["dispatch_path"] != str(path) or path.is_symlink() or not path.resolve().is_relative_to(root):
         raise ArtifactContractError("Direct dispatch path escapes or differs from its canonical run location")
     if dispatch.run_root != str(root):
@@ -379,4 +388,62 @@ def audit_direct_completion(envelope: Mapping[str, Any], run_root: Path, *, requ
         process_identities.add(identity_key)
         if completed < dt.datetime.fromisoformat(exited["finished_utc"]):
             raise ArtifactContractError("Direct completion timestamp precedes process exit")
+    if dispatch.stage == "policy_session":
+        if set(roles) != {"policy"} or "resident_policy" in completion:
+            raise ArtifactContractError("Resident session must own exactly one real policy process")
+    elif dispatch.stage == "development_smoke":
+        name = "submission_record.json" if dispatch.attempt_id == 0 else f"submission_record_attempt_{dispatch.attempt_id:02d}.json"
+        submission = _load_canonical(run_root / "protocol" / name)
+        resident = submission.get("runtime_profile", {}).get("policy_lifetime") == "resident"
+        if resident:
+            audit_resident_binding(envelope, run_root, completion)
+        elif "resident_policy" in completion or (path.parent / "policy_session.json").exists():
+            raise ArtifactContractError("Unsubmitted resident policy evidence")
     return completion
+
+
+def audit_resident_binding(envelope: Mapping[str, Any], run_root: Path, completion: dict) -> None:
+    """Bind each proxy/reset to the real resident process and its final cleanup."""
+    from experiments.keyframe_neighborhood_sampling.resident_policy import RESET_STATE  # noqa: PLC0415
+
+    row, path = _load_runner(envelope, run_root)
+    binding_path = path.parent / "policy_session.json"
+    reset_path = path.parent / "resident_reset.json"
+    if completion.get("resident_policy") != {
+        "binding_sha256": sha256_file(binding_path), "reset_sha256": sha256_file(reset_path),
+    }:
+        raise ArtifactContractError("Resident completion lacks exact binding/reset digests")
+    binding = _load_canonical(binding_path)
+    reset = _load_canonical(reset_path)
+    if (binding.get("schema") != "resident-policy-binding-v1"
+            or binding.get("row_execution_id") != row.execution_id
+            or binding.get("row_dispatch_sha256") != envelope["dispatch_sha256"]):
+        raise ArtifactContractError("Resident binding names a different row")
+    session, session_path = _load_runner(binding.get("session", {}), run_root)
+    if session.stage != "policy_session" or any(getattr(session, field) != getattr(row, field) for field in (
+        "run_root", "repository_commit_sha", "launch_manifest_sha256", "submission_plan_sha256",
+        "matrix_sha256", "attempt_id", "gpu_uuids", "gpu_layout", "host_name", "host_boot_id",
+    )):
+        raise ArtifactContractError("Resident policy differs from row source/allocation/submission")
+    if binding.get("policy_start_sha256") != sha256_file(session_path.parent / "policy_start.json"):
+        raise ArtifactContractError("Resident binding does not name the real process-start evidence")
+    plan = _load_canonical(session_path.parent / "row_plan.json")
+    if (plan.get("stage") != row.stage or row.row_id not in plan.get("row_ids", [])
+            or len(plan["row_ids"]) != len(set(plan["row_ids"]))):
+        raise ArtifactContractError("Resident session plan does not contain this row uniquely")
+    if (reset.get("schema") != "resident-reset-v1" or reset.get("row_execution_id") != row.execution_id
+            or reset.get("session_execution_id") != session.execution_id
+            or reset.get("binding_sha256") != sha256_file(binding_path) or reset.get("state") != RESET_STATE
+            or type(reset.get("model_process_pid")) is not int or reset["model_process_pid"] <= 0):
+        raise ArtifactContractError("Resident reset receipt is incomplete or mismatched")
+    matrix = json.loads((run_root / "protocol/smoke_matrix.json").read_bytes())
+    config = reset.get("selector_config", {})
+    if any(config.get(field) != matrix["rows"][row.row_id][field] for field in ("task", "episode_id", "arm")):
+        raise ArtifactContractError("Resident reset configured the wrong trajectory")
+    audit_direct_completion(binding["session"], run_root, required_roles={"policy"})
+    started, exited = _validated_role_evidence(session, session_path, "policy")
+    if not (dt.datetime.fromisoformat(started["started_utc"])
+            <= dt.datetime.fromisoformat(reset["recorded_utc"])
+            <= dt.datetime.fromisoformat(completion["finished_utc"])
+            <= dt.datetime.fromisoformat(exited["finished_utc"])):
+        raise ArtifactContractError("Row/reset interval is outside the resident model lifecycle")

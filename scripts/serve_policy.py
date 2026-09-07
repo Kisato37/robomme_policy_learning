@@ -57,6 +57,8 @@ class Args:
     # Direct-runner readiness identity. Both fields are required with listen_fd.
     execution_id: str | None = None
     dispatch_sha256: str | None = None
+    # Resident sessions accept one active trajectory connection at a time.
+    exclusive_clients: bool = False
     # Record the policy's behavior for debugging.
     record: bool = False
     seed: int = 42
@@ -128,6 +130,7 @@ def main(args: Args) -> None:
         listen_fd=args.listen_fd,
         execution_id=args.execution_id,
         dispatch_sha256=args.dispatch_sha256,
+        exclusive_clients=args.exclusive_clients,
     )
     server.serve_forever()
 

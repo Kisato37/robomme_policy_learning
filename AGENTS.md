@@ -10,6 +10,13 @@ protocol in every prompt.
 - GPU usage is generally available and is not a reason to weaken or prematurely
   downscale an experiment. Small runs are appropriate when they validate the
   design or implementation before a complete run.
+- Prioritize experimental validity, useful throughput, and completion over
+  minimizing GPU occupancy. Keep actively used models resident across sequential
+  episodes when reset/isolation checks pass; do not unload after every episode
+  merely to release the GPU. Shared GPUs are explicitly allowed: select ample
+  available memory and preferably low existing load at batch startup, without
+  treating our own subsequent utilization as a reason to stop useful work.
+  Retain real memory/error safeguards and never interfere with other users' jobs.
 - Obtain explicit user approval before launching an unusually large or multi-day
   job.
 

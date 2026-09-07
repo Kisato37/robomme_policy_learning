@@ -117,6 +117,13 @@ class DirectDispatch:
                 raise RunnerContractError("Architecture dispatch requires one GPU and attempt zero")
             if self.row_id is not None or self.shard_id is not None or self.policy_port is not None:
                 raise RunnerContractError("Architecture dispatch cannot carry a trajectory row, shard, or server port")
+        elif self.stage == "policy_session":
+            if self.row_id is not None or self.shard_id is not None:
+                raise RunnerContractError("A resident policy session is not a trajectory or shard")
+            if len(self.gpu_uuids) != 2 or self.gpu_layout != "colocated" or len(set(self.gpu_uuids)) != 1:
+                raise RunnerContractError("Resident policy session requires explicit colocated GPU roles")
+            if type(self.policy_port) is not int or not 1024 <= self.policy_port <= 65535:
+                raise RunnerContractError("Resident policy session requires a nonprivileged port")
         elif self.stage in {"development_smoke", "formal"}:
             if len(self.gpu_uuids) != 2 or type(self.row_id) is not int or self.row_id < 0:
                 raise RunnerContractError(

@@ -15,6 +15,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import as_completed
 from contextlib import ExitStack
+from contextlib import nullcontext
 from dataclasses import asdict
 import json
 import os
@@ -143,6 +144,10 @@ def runtime_profile(environment_sh: Path, graphics_wrapper: Path, lock_directory
 
 def verify_runtime_profile(profile: dict) -> None:
     admission_policy(profile)
+    if profile.get("policy_lifetime", "per_row") not in {"per_row", "resident"}:
+        raise ValueError("Unknown policy lifetime")
+    if profile.get("policy_lifetime") == "resident" and profile.get("gpu_layout") != "colocated":
+        raise ValueError("Resident policy requires colocated placement")
     for key in ("environment_sh", "graphics_wrapper"):
         if sha256_file(Path(profile[key])) != profile[f"{key}_sha256"]:
             raise RuntimeError(f"Prepared runtime script changed: {key}")
@@ -251,6 +256,10 @@ def build_direct_submission(
         profile["lock_directory"],
     ]
     admission = admission_policy(profile)
+    if profile.get("policy_lifetime") == "resident":
+        if stage == "formal":
+            raise ValueError("Resident formal runs require a separately reviewed execution gate")
+        command.append("--resident-policy")
     if admission["mode"] == "shared":
         command.extend([
             "--allow-shared-gpu", "--shared-min-free-mib", str(admission["min_free_memory_mib"]),
@@ -373,6 +382,7 @@ class Execution:
         self.roles: dict[str, dict] = {}
         self.timed_out = False
         self.last_memory_check = 0.0
+        self.resident = None
         self.deadline = time.monotonic() + (
             ARCHITECTURE_SECONDS if dispatch.stage == "architecture_smoke" else ROW_SECONDS
         )
@@ -526,13 +536,20 @@ class Execution:
             self.stop.wait(0.2) if not reconciliation else time.sleep(0.2)
 
     def check_memory_budget(self) -> None:
+        if self.resident is not None:
+            child, _ = self.resident.execution.children["policy"]
+            if child.reap_if_finished() is not None:
+                raise RuntimeError("Resident model exited; stop instead of silently restarting it")
         limit = self.profile.get("memory_bytes_per_row")
         if limit is None or time.monotonic() - self.last_memory_check < 2:
             return
         self.last_memory_check = time.monotonic()
         pids = set()
         operations = LinuxProcessOperations()
-        for child, _ in self.children.values():
+        children = list(self.children.values())
+        if self.resident is not None:
+            children += list(self.resident.execution.children.values())
+        for child, _ in children:
             if child.returncode is None:
                 pids.update(member.pid for member in operations.live_group_members(child.identity.process_group))
         total = 0
@@ -570,6 +587,12 @@ class Execution:
 
     def complete(self) -> None:
         self.cleanup()
+        resident_links = {}
+        if self.resident is not None:
+            resident_links = {"resident_policy": {
+                "binding_sha256": sha256_file(self.directory / "policy_session.json"),
+                "reset_sha256": sha256_file(self.directory / "resident_reset.json"),
+            }}
         write_once_record(
             self.directory / "completion.json",
             {
@@ -579,6 +602,7 @@ class Execution:
                 "cleanup_confirmed": True,
                 "roles": self.roles,
                 "finished_utc": utc_now(),
+                **resident_links,
             },
         )
 
@@ -688,6 +712,8 @@ def execute_one(
     row: dict | None,
     gpu_uuids: tuple[str, ...],
     stop: threading.Event,
+    *,
+    resident=None,
 ) -> None:
     record = json.loads(submission_path.read_text())
     profile = record["runtime_profile"]
@@ -703,9 +729,19 @@ def execute_one(
     # Recheck the explicit exclusive/shared rule before and after our own lease.
     # This advisory lease prevents overlap with our jobs, not other users' jobs.
     physical_gpus = tuple(dict.fromkeys(gpu_uuids))
-    check_gpu_admission(physical_gpus, profile)
-    with GpuLease(Path(profile["lock_directory"]), physical_gpus) as lease:
-        admission_snapshot = check_gpu_admission(physical_gpus, profile)
+    if resident is None:
+        check_gpu_admission(physical_gpus, profile)
+    lease_context = (
+        GpuLease(Path(profile["lock_directory"]), physical_gpus)
+        if resident is None else nullcontext(resident.lease)
+    )
+    with lease_context as lease:
+        admission_snapshot = (
+            check_gpu_admission(physical_gpus, profile) if resident is None else {
+                "mode": "resident_session_continuation", "session_execution_id": resident.execution.dispatch.execution_id,
+                "checked_utc": utc_now(), "fresh_admission_required": False,
+            }
+        )
         if stop.is_set():
             return
         with PortReservation() as port, ExitStack() as monitors:
@@ -731,6 +767,7 @@ def execute_one(
             directory.mkdir(parents=True, exist_ok=False)
             write_once_record(directory / "gpu_admission.json", admission_snapshot)
             execution = Execution(dispatch, directory, profile, lease, stop)
+            execution.resident = resident
             monitors.enter_context(GpuTelemetry(directory / "gpu_telemetry.jsonl", physical_gpus))
             try:
                 if row is None:
@@ -750,6 +787,13 @@ def execute_one(
                         raise RuntimeError(f"Architecture gate exited {status}")
                     return
                 commands = row_commands(dispatch, row, execution.path, execution.digest, port.pass_fds[0])
+                if resident is not None:
+                    binding_path = directory / "policy_session.json"
+                    write_once_record(binding_path, resident.binding(execution))
+                    commands["policy"] = [
+                        str(REPO / ".venv/bin/python"), "-m", f"{MODULE}.resident_policy",
+                        "--binding", str(binding_path), "--listen-fd", str(port.pass_fds[0]),
+                    ]
                 execution.start("preflight", commands["preflight"])
                 if execution.wait("preflight") != 0:
                     raise RuntimeError("Row preflight failed; no policy or simulator launched")
@@ -844,7 +888,16 @@ def run_controller(run_root: Path, stage: str, records: list[tuple[Path, dict]],
             capacity = min(record["max_concurrent"], len(allocations))
             buckets = [record["row_ids"][slot::capacity] for slot in range(capacity)]
 
-            def worker(slot: int, buckets=buckets, path=path) -> None:
+            def worker(slot: int, buckets=buckets, path=path, record=record) -> None:
+                if record.get("runtime_profile", {}).get("policy_lifetime") == "resident":
+                    from experiments.keyframe_neighborhood_sampling.resident_policy import run_resident_rows
+                    try:
+                        run_resident_rows(run_root, stage, path, [rows[i] for i in buckets[slot]],
+                                          tuple(allocations[slot]), stop)
+                    except BaseException:
+                        stop.set()
+                        raise
+                    return
                 for row_id in buckets[slot]:
                     if stop.is_set():
                         return
@@ -876,6 +929,7 @@ def main() -> None:
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--stage", choices=("architecture_smoke", "development_smoke", "formal"), required=True)
     parser.add_argument("--gpu-layout", choices=("separate", "colocated"), default="separate")
+    parser.add_argument("--resident-policy", action="store_true", help="Load once per smoke slot; reset each episode")
     parser.add_argument("--allow-shared-gpu", action="store_true", help="Explicitly authorized sharing only; requires colocated layout")
     parser.add_argument("--shared-min-free-mib", type=int, default=49152)
     parser.add_argument("--shared-max-utilization", type=int, default=80)
@@ -908,6 +962,8 @@ def main() -> None:
     root = args.run_root.resolve()
     profile = runtime_profile(args.environment_sh, args.graphics_wrapper, args.lock_directory)
     profile["gpu_layout"] = args.gpu_layout
+    if args.resident_policy:
+        profile["policy_lifetime"] = "resident"
     if args.allow_shared_gpu:
         profile["gpu_admission"] = {
             "mode": "shared",

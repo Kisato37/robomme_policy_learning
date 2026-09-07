@@ -140,6 +140,9 @@ def validate_architecture_pass_report(
     ):
         raise RuntimeError("Extension architecture report/submission binding mismatch")
     if backend == "direct":
+        if (architecture_submission.get("runtime_profile", {}).get("policy_lifetime") == "resident"
+                and report.get("resident_cross_arm_reset", {}).get("passed") is not True):
+            raise RuntimeError("Resident policy requires the interleaved reset/repeat GPU check")
         validate_direct_runner(
             report.get("runner", {}), run_root, stage="architecture_smoke", attempt_id=0, row_id=None,
             submission=architecture_submission,
@@ -390,6 +393,26 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
             cache_after = next_cache
             seen_dtypes.add(dtype_contract)
 
+    if submission.get("runtime_profile", {}).get("policy_lifetime") == "resident":
+        # Revisit A only after exercising every other arm/shape B. This checks
+        # non-adjacent reuse, not a comparison of development success rates.
+        original = cases[0]["repeat"]
+        revisited = _base._run_once(
+            policy, capture, arm=cases[0]["arm"], history_length=cases[0]["history_length"],
+            seeds=seeds, seed_table_contract=seed_contract,
+        )
+        comparisons = {
+            field: original[field] == revisited[field]
+            for field in ("selected_frame_indices", "final_memory_tensor_sha256", "action_sha256")
+        }
+        stable = all(revisited["compile_cache"][f"{component}_before"] == revisited["compile_cache"][f"{component}_after"]
+                     for component in ("vision", "memory", "sample"))
+        report["resident_cross_arm_reset"] = {
+            "pattern": "A -> all other arm/shape cases -> A", "comparisons": comparisons,
+            "no_recompile": stable, "revisited": revisited, "passed": all(comparisons.values()) and stable,
+        }
+        if not report["resident_cross_arm_reset"]["passed"]:
+            raise RuntimeError("Resident cross-arm reset changed actions/memory or recompiled")
     policy.reset()
     final_reset = _base._reset_snapshot(policy)
     if not final_reset["passed"]:

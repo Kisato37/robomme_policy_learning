@@ -230,6 +230,32 @@ class MME_VLA_Policy:
         # preregistered call.  This slot is explicit so reset/isolation tests can
         # prove that no selector generator survives an episode reset.
         self._selector_rng = None
+
+    def reset_evidence(self) -> dict:
+        """Read-only proof of episode-state reset; compiled functions/weights stay resident."""
+        empty = self.mem_buffer is not None and not self.mem_buffer._history_feats
+        evidence = {
+            "seed": self._seed,
+            "history_empty": bool(empty),
+            "boundary_metadata_empty": self.mem_buffer is not None and not self.mem_buffer._history_metadata,
+            "step_idx": self.step_idx,
+            "exec_start_idx": self.exec_start_idx,
+            "selector_call_index": self._selector_call_index,
+            "selector_unconfigured": self._keyframe_selector_config is None,
+            "selector_rng_empty": self._selector_rng is None,
+            "pending_trace_empty": self._pending_selector_trace is None,
+            "rng_matches_seed": bool(np.array_equal(
+                np.asarray(jax.random.key_data(self._rng)),
+                np.asarray(jax.random.key_data(jax.random.key(self._seed))),
+            )),
+        }
+        if evidence != {
+            "seed": 7, "history_empty": True, "boundary_metadata_empty": True, "step_idx": -1, "exec_start_idx": 0,
+            "selector_call_index": 0, "selector_unconfigured": True,
+            "selector_rng_empty": True, "pending_trace_empty": True, "rng_matches_seed": True,
+        }:
+            raise RuntimeError(f"Resident policy reset failed: {evidence}")
+        return evidence
             
     
     def add_buffer(self, obs: dict) -> None:
