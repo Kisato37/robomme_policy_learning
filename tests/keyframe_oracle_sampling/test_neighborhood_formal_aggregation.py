@@ -58,6 +58,7 @@ def _extension_attempt(
     wrong_diagnostic: bool = False,
     wrong_replay_diagnostic: str | None = None,
     dense_final_boundaries: bool = False,
+    direct_setup_status: str | None = None,
 ):
     task = "InsertPeg"
     episode_id = 0
@@ -102,6 +103,8 @@ def _extension_attempt(
             "resolved_environment_seed": 123,
             "resolved_difficulty_hint": "fixture",
             "difficulty": "fixture",
+            **({"runner_backend": "direct"} if direct_setup_status is not None else {}),
+            **({"environment_setup_completed": False} if direct_setup_status == "false" else {}),
         }
     )
     writer.record_initial_conditions(
@@ -222,6 +225,17 @@ def _extension_attempt(
         }
     )
     return writer, key, row, launch, seed_payload
+
+
+@pytest.mark.parametrize("direct_setup_status", ["missing", "false"])
+def test_completed_direct_formal_result_cannot_omit_simulator_setup_proof(tmp_path, direct_setup_status):
+    writer, key, row, launch, seed_payload = _extension_attempt(
+        tmp_path, arm="OC3", direct_setup_status=direct_setup_status
+    )
+    with pytest.raises(ArtifactContractError, match="confirmed simulator setup"):
+        audit_extension_attempt(
+            writer, expected_key=key, expected_row=row, launch=launch, seed_payload=seed_payload,
+        )
 
 
 @pytest.mark.parametrize("arm", EXTENSION_ARMS)

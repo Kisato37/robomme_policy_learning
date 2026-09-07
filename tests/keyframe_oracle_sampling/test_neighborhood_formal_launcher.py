@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from experiments.keyframe_neighborhood_sampling import submit_direct
 from experiments.keyframe_neighborhood_sampling import submit_formal
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_PROTOCOL_FAMILY
 from experiments.keyframe_neighborhood_sampling.formal_matrix import FORMAL_TRAJECTORY_COUNT
@@ -46,6 +47,16 @@ def test_extension_formal_rows_shard_without_exceeding_global_concurrency():
     assert [row for shard in shards for row in shard] == list(range(FORMAL_TRAJECTORY_COUNT))
     with pytest.raises(ValueError, match="require --max-concurrent"):
         shard_rows(list(range(FORMAL_TRAJECTORY_COUNT)), max_concurrent=1)
+
+
+@pytest.mark.parametrize("max_concurrent", [1, 2, 4])
+def test_direct_sequential_shards_preserve_all_rows_with_one_global_cap(max_concurrent):
+    shards, per_shard_concurrent = shard_rows(
+        list(range(FORMAL_TRAJECTORY_COUNT)), max_concurrent=max_concurrent, sequential=True
+    )
+    assert [len(shard) for shard in shards] == [1000, 600]
+    assert per_shard_concurrent == max_concurrent
+    assert [row for shard in shards for row in shard] == list(range(FORMAL_TRAJECTORY_COUNT))
 
 
 def test_prepare_smoke_gate_rejects_parent_or_partial_evidence():
@@ -152,8 +163,58 @@ def test_initial_submission_is_exact_1600_and_cannot_be_subset(tmp_path, monkeyp
     assert all(
         "experiments/keyframe_neighborhood_sampling/run_formal.sbatch" in command[-5] for command, _ in submissions
     )
+    assert "shard_scheduling" not in plan
+    assert all("shard_scheduling" not in record for _, record in submissions)
     with pytest.raises(ValueError, match="complete 1,600-row matrix"):
         build_submission(run_root, max_concurrent=4, attempt_id=0, row_ids=(0,))
+
+
+@pytest.mark.parametrize("gpu_layout", ["separate", "colocated"])
+def test_direct_full_formal_builder_and_controller_accept_one_execution_slot(tmp_path, monkeypatch, gpu_layout):
+    run_root = _stub_prepared_root(tmp_path, monkeypatch)
+    manifest_path = run_root / "protocol/launch_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    _write_json(manifest_path, {**manifest, "runner_backend": "direct", "gpu_layout": gpu_layout})
+    setup, graphics = tmp_path / "environment.sh", tmp_path / "graphics.sh"
+    setup.write_text(":\n")
+    graphics.write_text('exec "$@"\n')
+    profile = {
+        **submit_direct.runtime_profile(setup, graphics, tmp_path),
+        "gpu_layout": gpu_layout,
+    }
+    monkeypatch.setattr(submit_direct.os, "sched_getaffinity", lambda _: set(range(12)), raising=False)
+    # Remove ambient tuning from this synthetic CPU fixture; no GPU payload runs.
+    prefixes = ("JAX_", "XLA_", "TF_", "CUBLAS_", "CUDNN_", "NVIDIA_TF32_", "OMP_", "MKL_", "OPENBLAS_", "PYTORCH_")
+    for key in list(submit_direct.os.environ):
+        if key.startswith(prefixes):
+            monkeypatch.delenv(key)
+    gpu_a = "GPU-11111111-1111-1111-1111-111111111111"
+    gpu_b = "GPU-22222222-2222-2222-2222-222222222222"
+    allocation = [gpu_a, gpu_a if gpu_layout == "colocated" else gpu_b]
+    records, plan = submit_direct.build_direct_submission(run_root, "formal", [allocation], profile)
+    assert plan["global_max_concurrent"] == 1
+    assert plan["shard_scheduling"] == "sequential"
+    assert [len(record["row_ids"]) for _, record in records] == [1000, 600]
+    assert [record["array"] for _, record in records] == ["0-999%1", "0-599%1"]
+    assert all(record["max_concurrent"] == 1 for _, record in records)
+    assert all(record["global_max_concurrent"] == 1 for _, record in records)
+    assert all(record["shard_scheduling"] == "sequential" for _, record in records)
+    assert all(record["gpu_pairs"] == [allocation] for _, record in records)
+    assert all(not path.exists() for path, _ in records)
+    calls = []
+
+    def cpu_only_row(root, stage, path, row, gpu_uuids, stop):
+        assert root == run_root
+        assert stage == "formal"
+        assert gpu_uuids == tuple(allocation)
+        assert not stop.is_set()
+        calls.append((row["row_id"], path))
+
+    monkeypatch.setattr(submit_direct, "execute_one", cpu_only_row)
+    submit_direct.run_controller(run_root, "formal", records, [allocation])
+    assert [row_id for row_id, _ in calls] == list(range(1600))
+    assert [path for _, path in calls[:1000]] == [records[0][0]] * 1000
+    assert [path for _, path in calls[1000:]] == [records[1][0]] * 600
 
 
 def test_retry_requires_explicit_preceding_retry_allowed_failure(tmp_path, monkeypatch):

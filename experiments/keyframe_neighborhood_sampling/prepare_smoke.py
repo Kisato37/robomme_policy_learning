@@ -72,8 +72,14 @@ def dry_run_contract() -> dict[str, Any]:
     }
 
 
-def prepare(run_root: Path, checkpoint_archive: Path) -> Path:
+def prepare(
+    run_root: Path, checkpoint_archive: Path, *, runner_backend: str = "slurm", gpu_layout: str = "separate"
+) -> Path:
     """Create the fresh, write-once protocol bundle for the 48 smoke rows."""
+    if runner_backend not in {"slurm", "direct"}:
+        raise ValueError("Unknown runner backend")
+    if gpu_layout not in {"separate", "colocated"} or (runner_backend != "direct" and gpu_layout != "separate"):
+        raise ValueError("Colocated GPU layout is supported only by the explicit direct backend")
     run_root = run_root.resolve()
     expected_parent = (REPO / RUN_PARENT_RELATIVE).resolve()
     if run_root.parent != expected_parent:
@@ -130,6 +136,7 @@ def prepare(run_root: Path, checkpoint_archive: Path) -> Path:
         protocol_dir / "launch_manifest.json",
         {
             "schema_version": 1,
+            **({"runner_backend": "direct", "gpu_layout": gpu_layout} if runner_backend == "direct" else {}),
             "run_id": run_root.name,
             "run_kind": "development_smoke",
             "created_utc": utc_now(),
@@ -179,14 +186,21 @@ def prepare(run_root: Path, checkpoint_archive: Path) -> Path:
             "matrix": matrix["rows"],
             "resources": {
                 "nodes_per_row": 1,
-                "gpus_per_row": 2,
+                "gpus_per_row": 1 if gpu_layout == "colocated" else 2,
                 "max_concurrent": 4,
-                "ports": "20000 + (SLURM_JOB_ID mod 20000)",
+                "ports": (
+                    "inherited loopback listening socket"
+                    if runner_backend == "direct"
+                    else "20000 + (SLURM_JOB_ID mod 20000)"
+                ),
             },
             "formal_launch_authorized": False,
             "submitted": False,
-            "slurm_jobs": [],
+            **({} if runner_backend == "direct" else {"slurm_jobs": []}),
             "command_template": (
+                "python -m experiments.keyframe_neighborhood_sampling.submit_direct "
+                "--run-root <run_root> --stage development_smoke <reviewed-runtime-options>"
+                if runner_backend == "direct" else
                 "python -m experiments.keyframe_neighborhood_sampling.submit_smoke --run-root <run_root>"
             ),
         },
@@ -199,17 +213,20 @@ def main() -> None:
     parser.add_argument("--run-root", type=Path)
     parser.add_argument("--checkpoint-archive", type=Path)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--runner-backend", choices=("slurm", "direct"), default="slurm")
+    parser.add_argument("--gpu-layout", choices=("separate", "colocated"), default="separate")
     args = parser.parse_args()
     if args.dry_run:
         print(json.dumps(dry_run_contract(), indent=2, sort_keys=True))
         return
     if args.run_root is None or args.checkpoint_archive is None:
         parser.error("--run-root and --checkpoint-archive are required unless --dry-run is used")
-    prepare(args.run_root, args.checkpoint_archive)
-    print(
-        "Prepared without submission. Next run the fresh OC3/OC5 architecture gate via "
-        "experiments.keyframe_neighborhood_sampling.submit_architecture_smoke."
+    prepare(args.run_root, args.checkpoint_archive, runner_backend=args.runner_backend, gpu_layout=args.gpu_layout)
+    entry = (
+        "submit_direct --stage architecture_smoke (see LIGHTHOUSE_EXECUTION.md for runtime options)"
+        if args.runner_backend == "direct" else "submit_architecture_smoke"
     )
+    print(f"Prepared without submission. Next run the fresh OC3/OC5 architecture gate via {entry}.")
 
 
 if __name__ == "__main__":

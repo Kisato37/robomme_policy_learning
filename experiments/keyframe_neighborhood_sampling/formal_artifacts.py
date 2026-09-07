@@ -14,6 +14,11 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from experiments.keyframe_neighborhood_sampling.architecture_smoke import validate_architecture_pass_report
+from experiments.keyframe_neighborhood_sampling.direct_provenance import direct_runner_for_runtime
+from experiments.keyframe_neighborhood_sampling.direct_provenance import require_runtime_backend
+from experiments.keyframe_neighborhood_sampling.direct_provenance import runner_backend
+from experiments.keyframe_neighborhood_sampling.direct_provenance import runtime_direct_provenance
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_PROTOCOL_FAMILY
 from experiments.keyframe_neighborhood_sampling.formal_matrix import FORMAL_DATASET
 from experiments.keyframe_neighborhood_sampling.formal_matrix import FORMAL_EPISODE_IDS
@@ -136,20 +141,22 @@ def _require_extension_identity(payload: Mapping[str, Any], *, source: str) -> N
         raise ArtifactContractError(f"{source} protocol family mismatch")
 
 
+def validate_extension_runtime_location(run_root: Path, repo_root: Path, *, source: str) -> None:
+    """Bind a direct run child to the checkout's designated (possibly mounted) runs directory."""
+    expected_parent = (repo_root.resolve() / EXTENSION_RUNTIME_ROOT).resolve()
+    if run_root.resolve().parent != expected_parent:
+        raise ArtifactContractError(
+            f"{source} run root must be one direct child of the repository's runs/keyframe_neighborhood_sampling"
+        )
+
+
 def _validate_extension_run_root(
     run_root: Path,
     repo_root: Path,
     *,
     source: str,
 ) -> str:
-    try:
-        relative_root = run_root.relative_to(repo_root)
-    except ValueError as exc:
-        raise ArtifactContractError(f"{source} run root must be inside the repository") from exc
-    if relative_root.parent != EXTENSION_RUNTIME_ROOT:
-        raise ArtifactContractError(
-            f"{source} run root must be one direct child of runs/keyframe_neighborhood_sampling"
-        )
+    validate_extension_runtime_location(run_root, repo_root, source=source)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
     status = subprocess.check_output(
         [
@@ -304,6 +311,15 @@ def validate_prepared_smoke_root(
         raise ArtifactContractError("Extension smoke submission trajectory_count/row_ids mismatch")
     if attempt_id == 0 and row_ids != list(range(SMOKE_TRAJECTORY_COUNT)):
         raise ArtifactContractError("Initial extension smoke submission is not the exact 48-row matrix")
+    if runner_backend(manifest) != runner_backend(submission_payload):
+        raise ArtifactContractError("Prepared smoke and submitted runner backends differ")
+    if require_runtime_backend(submission_payload) == "direct":
+        envelope = direct_runner_for_runtime(run_root)
+        runtime_direct_provenance(
+            run_root, stage="development_smoke", attempt_id=attempt_id,
+            row_id=envelope["dispatch"]["row_id"], submission=submission_payload, submission_path=submission,
+        )
+        return manifest
     active_job = os.environ.get("SLURM_ARRAY_JOB_ID")
     if not active_job or submission_payload.get("slurm_array_job_id") != active_job:
         raise ArtifactContractError("Extension smoke evaluator is not inside the recorded Slurm array")
@@ -329,6 +345,13 @@ def _validate_bound_smoke_evidence(
         paths["architecture_submission"], source="extension architecture submission"
     )
     development = _load_json_object(paths["development_smoke"], source="extension development-smoke audit")
+    for payload in (architecture, architecture_submission, development):
+        if runner_backend(payload) != runner_backend(manifest):
+            raise ArtifactContractError("Formal preparation and smoke evidence use different runner backends")
+    if runner_backend(manifest) == "direct":
+        validate_architecture_pass_report(
+            architecture, run_root=Path(architecture["run_root"]), architecture_submission=architecture_submission,
+        )
     for source, payload in (
         ("Extension architecture report", architecture),
         ("Extension architecture submission", architecture_submission),
@@ -442,14 +465,7 @@ def validate_formal_prepared_root(
     if manifest.get("matrix") != matrix["rows"]:
         raise ArtifactContractError("Extension launch manifest does not record the exact 1,600-row matrix")
 
-    try:
-        relative_root = run_root.relative_to(repo_root)
-    except ValueError as exc:
-        raise ArtifactContractError("Extension formal run root must be inside the repository") from exc
-    if relative_root.parent != EXTENSION_RUNTIME_ROOT:
-        raise ArtifactContractError(
-            "Extension formal run root must be one direct child of runs/keyframe_neighborhood_sampling"
-        )
+    validate_extension_runtime_location(run_root, repo_root, source="Extension formal")
 
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo_root, text=True).strip()
     status = subprocess.check_output(
@@ -525,6 +541,8 @@ def validate_prepared_formal_root(
         raise ArtifactContractError("Extension formal submission plan changed after shard submission")
     plan = _load_json_object(plan_path, source="extension formal submission plan")
     _require_extension_identity(plan, source="Extension formal submission plan")
+    if runner_backend(manifest) != runner_backend(submission) or runner_backend(plan) != runner_backend(submission):
+        raise ArtifactContractError("Formal plan, prepared root, and submission runner backends differ")
     if int(plan.get("attempt_id", -1)) != attempt_id:
         raise ArtifactContractError("Extension formal submission plan attempt ID mismatch")
     if int(plan.get("max_rows_per_array", -1)) != MAX_ROWS_PER_ARRAY:
@@ -573,6 +591,13 @@ def validate_prepared_formal_root(
     if attempt_id == 0 and sorted(all_rows) != list(range(FORMAL_TRAJECTORY_COUNT)):
         raise ArtifactContractError("Initial extension formal plan is not the exact 1,600-row matrix")
 
+    if require_runtime_backend(submission) == "direct":
+        envelope = direct_runner_for_runtime(run_root)
+        runtime_direct_provenance(
+            run_root, stage="formal", attempt_id=attempt_id, row_id=envelope["dispatch"]["row_id"],
+            submission=submission, submission_path=matching_paths[0],
+        )
+        return manifest
     active_array_job = os.environ.get("SLURM_ARRAY_JOB_ID")
     if not active_array_job or submission.get("slurm_array_job_id") != active_array_job:
         raise ArtifactContractError("Extension evaluator is not inside the recorded Slurm array")

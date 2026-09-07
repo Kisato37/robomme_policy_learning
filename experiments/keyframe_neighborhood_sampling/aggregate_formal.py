@@ -31,8 +31,13 @@ from experiments.keyframe_neighborhood_sampling.analysis import DEFAULT_RANDOMIZ
 from experiments.keyframe_neighborhood_sampling.analysis import REFERENCE_PER_EPISODE_SHA256
 from experiments.keyframe_neighborhood_sampling.analysis import build_extension_analysis
 from experiments.keyframe_neighborhood_sampling.analysis import load_published_reference_oc
+from experiments.keyframe_neighborhood_sampling.architecture_smoke import validate_architecture_pass_report
+from experiments.keyframe_neighborhood_sampling.direct_provenance import runner_backend
+from experiments.keyframe_neighborhood_sampling.direct_provenance import validate_direct_attempt
+from experiments.keyframe_neighborhood_sampling.direct_provenance import validate_direct_submission
 from experiments.keyframe_neighborhood_sampling.formal_artifacts import AGGREGATOR_SOURCE_RELATIVE
 from experiments.keyframe_neighborhood_sampling.formal_artifacts import ANALYSIS_SOURCE_RELATIVE
+from experiments.keyframe_neighborhood_sampling.formal_artifacts import validate_extension_runtime_location
 from experiments.keyframe_neighborhood_sampling.formal_artifacts import validate_frozen_formal_sources
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_ARMS
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_PROTOCOL_FAMILY
@@ -553,6 +558,8 @@ def validate_extension_protocol_bundle(
         ("development-smoke audit", paths["development_smoke"]),
     ):
         payload = _load_json_object(path, source=f"extension {label}")
+        if runner_backend(payload) != runner_backend(launch):
+            raise ArtifactContractError("Formal launch and its smoke evidence use different runner backends")
         _require_exact_fields(
             payload,
             {
@@ -573,6 +580,12 @@ def validate_extension_protocol_bundle(
             if observed is not None and observed != launch.get(field):
                 raise ArtifactContractError(f"Extension {label} differs from launch manifest on {field}")
 
+    if runner_backend(launch) == "direct":
+        architecture = _load_json_object(paths["architecture_report"])
+        validate_architecture_pass_report(
+            architecture, run_root=Path(architecture["run_root"]),
+            architecture_submission=_load_json_object(paths["architecture_submission"]),
+        )
     reference_alignment = _validate_reference_alignment(
         repo_root,
         launch=launch,
@@ -647,6 +660,11 @@ def validate_submission_attempt(
     if not plan_path.is_file():
         raise ArtifactContractError(f"Missing extension submission plan: {plan_path}")
     plan = _load_json_object(plan_path, source="extension submission plan")
+    backend = runner_backend(plan)
+    if backend != runner_backend(launch):
+        raise ArtifactContractError("Formal plan and launch runner backends differ")
+    if backend == "direct":
+        validate_direct_submission(plan, stage="formal")
     repository_commit = launch["repository"]["commit_sha"]
     _require_exact_fields(
         plan,
@@ -706,6 +724,13 @@ def validate_submission_attempt(
     record_digests = []
     for record_path in record_paths:
         record = _load_json_object(record_path, source="extension submission record")
+        if runner_backend(record) != backend:
+            raise ArtifactContractError("Formal plan and shard runner backends differ")
+        if backend == "direct":
+            validate_direct_submission(record, stage="formal")
+            for field in ("gpu_pairs", "runtime_profile"):
+                if record.get(field) != plan.get(field):
+                    raise ArtifactContractError(f"Direct shard differs from its plan on {field}")
         shard_id = record.get("shard_id")
         if type(shard_id) is not int or shard_id not in shard_by_id:
             raise ArtifactContractError("Extension submission record has unknown shard")
@@ -743,7 +768,8 @@ def validate_submission_attempt(
         array_ids = _integer_list(record.get("array_task_ids"), field="extension record array IDs")
         if record.get("trajectory_count") != len(row_ids):
             raise ArtifactContractError("Extension submission record count mismatch")
-        job_id = record.get("slurm_array_job_id")
+        identity_field = "direct_run_id" if backend == "direct" else "slurm_array_job_id"
+        job_id = record.get(identity_field)
         if not isinstance(job_id, str) or not job_id:
             raise ArtifactContractError("Extension submission record lacks a Slurm job ID")
         job_ids.append(job_id)
@@ -755,7 +781,7 @@ def validate_submission_attempt(
                 "attempt_id": attempt_id,
                 "shard_id": shard_id,
                 "array_task_id": local_id,
-                "slurm_array_job_id": job_id,
+                **({"runner_backend": "direct", "direct_run_id": job_id} if backend == "direct" else {"slurm_array_job_id": job_id}),
                 "submission_record_sha256": sha256_file(record_path),
             }
     return (
@@ -763,7 +789,7 @@ def validate_submission_attempt(
             "attempt_id": attempt_id,
             "trajectory_count": len(planned_rows),
             "shard_count": len(shards),
-            "slurm_array_job_ids": job_ids,
+            **({"runner_backend": "direct", "direct_run_ids": job_ids} if backend == "direct" else {"slurm_array_job_ids": job_ids}),
             "submission_plan_sha256": plan_sha256,
             "submission_record_digests": sorted(record_digests, key=lambda item: item["shard_id"]),
             "row_ids_sha256": hashlib.sha256(canonical_json_bytes(sorted(planned_rows))).hexdigest(),
@@ -816,7 +842,27 @@ def _validate_attempt_submission_binding(
     *,
     row_id: int,
     authorization: Mapping[str, Any],
+    run_root: Path,
+    validated_readiness_failure: bool = False,
 ) -> None:
+    if runner_backend(manifest) != runner_backend(authorization):
+        raise ArtifactContractError("Formal attempt and submission runner backends differ")
+    if runner_backend(authorization) == "direct":
+        roles = {"preflight", "policy", "reconcile"}
+        if not validated_readiness_failure:
+            roles.add("evaluator")
+        elif manifest.get("execution_phase") != "policy_server_readiness" or manifest.get("launcher_failure_only") is not True:
+            raise ArtifactContractError("Direct readiness lifecycle exemption lacks launcher-only provenance")
+        dispatch = validate_direct_attempt(
+            manifest, run_root, attempt_id=authorization["attempt_id"], row_id=row_id,
+            trajectory_kind="formal", required_roles=roles,
+        )
+        if (
+            dispatch.submission_plan_sha256 != authorization["submission_record_sha256"]
+            or dispatch.shard_id != authorization["shard_id"]
+        ):
+            raise ArtifactContractError("Direct formal attempt differs from its exact submission authorization")
+        return
     slurm = manifest.get("slurm")
     if not isinstance(slurm, Mapping):
         raise ArtifactContractError("Extension attempt manifest lacks Slurm provenance")
@@ -863,6 +909,8 @@ def audit_extension_attempt(
 
     generic_report = audit_attempt(writer)
     manifest = _load_json_object(writer.manifest_path)
+    if runner_backend(manifest) == "direct" and manifest.get("environment_setup_completed") is not True:
+        raise ArtifactContractError("Completed direct formal result lacks confirmed simulator setup")
     result = _load_json_object(writer.result_path)
     initial_conditions = _load_json_object(writer.initial_conditions_path)
     traces = read_jsonl(writer.trace_path)
@@ -1229,14 +1277,7 @@ def audit_extension_run(
         raise FileNotFoundError(f"Extension formal root does not exist: {run_root}")
     if (run_root / "aggregate").exists() or (run_root / "aggregate").is_symlink():
         raise FileExistsError("Refusing to inspect and republish an existing extension aggregate")
-    try:
-        relative_root = run_root.relative_to(repo_root)
-    except ValueError as exc:
-        raise ArtifactContractError("Extension run root must be inside the repository") from exc
-    if relative_root.parent != Path("runs/keyframe_neighborhood_sampling"):
-        raise ArtifactContractError(
-            "Extension run root must be one direct child of runs/keyframe_neighborhood_sampling"
-        )
+    validate_extension_runtime_location(run_root, repo_root, source="Extension formal aggregation")
 
     launch, matrix, seed_payload, _, protocol_provenance = validate_extension_protocol_bundle(run_root, repo_root)
     repository_provenance = _repository_provenance(
@@ -1362,7 +1403,13 @@ def audit_extension_run(
             authorization = authorizations[attempt_id][row_id]
         except KeyError as exc:
             raise ArtifactContractError("Extension attempt lacks submission authorization") from exc
-        _validate_attempt_submission_binding(manifest, row_id=row_id, authorization=authorization)
+        _validate_attempt_submission_binding(
+            manifest, row_id=row_id, authorization=authorization, run_root=run_root,
+            validated_readiness_failure=(
+                (key, attempt_id) in failures
+                and failures[(key, attempt_id)].get("failure_phase") == "policy_server_readiness"
+            ),
+        )
 
     paired_manifests = []
     validated_records: dict[ScientificKey, dict[str, Any]] = {}

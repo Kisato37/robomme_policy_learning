@@ -10,6 +10,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from experiments.keyframe_neighborhood_sampling.direct_provenance import direct_runner_for_runtime
+from experiments.keyframe_neighborhood_sampling.direct_provenance import runner_backend
+from experiments.keyframe_neighborhood_sampling.direct_provenance import validate_direct_attempt
+from experiments.keyframe_neighborhood_sampling.direct_provenance import validate_direct_process_exit
 from experiments.keyframe_neighborhood_sampling.formal_artifacts import validate_prepared_formal_root
 from experiments.keyframe_neighborhood_sampling.formal_artifacts import validate_prepared_smoke_root
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_PROTOCOL_FAMILY
@@ -28,6 +32,45 @@ def _matrix_row_field(trajectory_kind: str) -> str:
     return "formal_matrix_row_id" if trajectory_kind == "formal" else "smoke_matrix_row_id"
 
 
+def _execution_provenance(
+    run_root: Path, *, row_id: int, attempt_id: int, trajectory_kind: str,
+    slurm: dict | None, runner: dict | None,
+) -> dict[str, Any]:
+    if runner is not None:
+        if slurm is not None:
+            raise ArtifactContractError("Direct attempt cannot contain Slurm provenance")
+        payload = {"runner_backend": "direct", "runner": runner}
+        validate_direct_attempt(
+            payload, run_root, row_id=row_id, attempt_id=attempt_id, trajectory_kind=trajectory_kind,
+        )
+        return payload
+    slurm = dict(slurm or {})
+    row_field = _matrix_row_field(trajectory_kind)
+    if row_field in slurm and str(slurm[row_field]) != str(row_id):
+        raise ArtifactContractError("Launcher failure Slurm row binding conflicts with row ID")
+    slurm[row_field] = str(row_id)
+    return {"slurm": slurm}
+
+
+def _manifest_execution(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    if runner_backend(manifest) == "direct":
+        return {
+            "runner_backend": "direct", "runner": manifest.get("runner"),
+            **({"renderer_device": manifest["renderer_device"]} if "renderer_device" in manifest else {}),
+        }
+    return {"slurm": manifest.get("slurm")}
+
+
+def _direct_lifecycle_deadline(run_root: Path, manifest: Mapping[str, Any], exit_status: int) -> bool:
+    if type(exit_status) is not int or not 0 <= exit_status <= 255:
+        raise ArtifactContractError("Direct evaluator lifecycle lacks a valid shell exit status")
+    exited = validate_direct_process_exit(manifest["runner"], run_root, role="evaluator")
+    raw_status = exited["returncode"]
+    if exit_status != (128 - raw_status if raw_status < 0 else raw_status):
+        raise ArtifactContractError("Direct evaluator status differs from its linked process exit")
+    return exited["wall_clock_limit_reached"] is True
+
+
 def record_launcher_failure(
     run_root: Path,
     *,
@@ -41,15 +84,15 @@ def record_launcher_failure(
     dataset: str,
     error_type: str,
     error: str,
-    slurm: dict,
+    slurm: dict | None = None,
+    runner: dict | None = None,
 ) -> Path:
     """Write an extension-identified readiness failure without a fake result."""
     key = ScientificKey(task, episode_id, arm, trajectory_kind)
-    slurm = dict(slurm)
     row_field = _matrix_row_field(trajectory_kind)
-    if row_field in slurm and str(slurm[row_field]) != str(row_id):
-        raise ArtifactContractError("Launcher failure Slurm row binding conflicts with row ID")
-    slurm[row_field] = str(row_id)
+    execution = _execution_provenance(
+        run_root, row_id=row_id, attempt_id=attempt_id, trajectory_kind=trajectory_kind, slurm=slurm, runner=runner,
+    )
     store = RunArtifactStore(run_root)
     writer = store.new_attempt(
         key,
@@ -64,7 +107,7 @@ def record_launcher_failure(
             "scientific_actions_started": False,
             "environment_setup_completed": False,
             "launcher_failure_only": True,
-            "slurm": slurm,
+            **execution,
         },
     )
     store.record_failure(
@@ -82,7 +125,7 @@ def record_launcher_failure(
             "scientific_actions_started": False,
             "environment_setup_completed": False,
             "episode_manifest_sha256": sha256_file(writer.manifest_path),
-            "slurm": slurm,
+            **execution,
         }
     )
     return writer.attempt_dir
@@ -100,15 +143,15 @@ def _ensure_extension_attempt_manifest(
     max_steps: int,
     dataset: str,
     exit_status: int,
-    slurm: dict,
+    slurm: dict | None = None,
+    runner: dict | None = None,
 ) -> None:
     """Pre-create only a missing launcher-owned manifest with extension identity."""
     key = ScientificKey(task, episode_id, arm, trajectory_kind)
-    slurm = dict(slurm)
     row_field = _matrix_row_field(trajectory_kind)
-    if row_field in slurm and str(slurm[row_field]) != str(row_id):
-        raise ArtifactContractError("Evaluator reconciliation Slurm row binding conflicts")
-    slurm[row_field] = str(row_id)
+    execution = _execution_provenance(
+        run_root, row_id=row_id, attempt_id=attempt_id, trajectory_kind=trajectory_kind, slurm=slurm, runner=runner,
+    )
     store = RunArtifactStore(run_root)
     attempt_dir = store.attempt_dir(key, attempt_id)
     if attempt_dir.exists():
@@ -127,7 +170,7 @@ def _ensure_extension_attempt_manifest(
             "environment_setup_completed": False,
             "launcher_failure_only": True,
             "evaluator_exit_status": int(exit_status),
-            "slurm": slurm,
+            **execution,
         },
     )
 
@@ -155,6 +198,7 @@ def validate_extension_failure_record(
     record: Mapping[str, Any],
     *,
     expected_row_id: int | None = None,
+    require_direct_completion: bool = True,
 ) -> dict[str, Any]:
     """Require a failure ledger row to bind exact OC3/OC5 attempt evidence."""
     try:
@@ -198,11 +242,30 @@ def validate_extension_failure_record(
         "episode_manifest_sha256": sha256_file(writer.manifest_path),
         "scientific_actions_started": writer.trace_path.exists(),
         "environment_setup_completed": manifest.get("environment_setup_completed"),
-        "slurm": manifest.get("slurm"),
+        **_manifest_execution(manifest),
     }
     if any(record.get(field) != value for field, value in expected.items()):
         raise ArtifactContractError("Extension failure provenance does not match its attempt")
-    manifest_row_id = manifest.get("slurm", {}).get(row_field)
+    backend = runner_backend(manifest)
+    if runner_backend(record) != backend:
+        raise ArtifactContractError("Failure and attempt runner backends differ")
+    if backend == "direct":
+        roles = {"preflight", "policy", "reconcile"}
+        if record.get("failure_phase") != "policy_server_readiness":
+            roles.add("evaluator")
+        elif (
+            manifest.get("execution_phase") != "policy_server_readiness"
+            or manifest.get("launcher_failure_only") is not True
+            or record.get("scientific_actions_started") is not False
+        ):
+            raise ArtifactContractError("Direct readiness failure lacks launcher-only provenance")
+        dispatch = validate_direct_attempt(
+            manifest, run_root, attempt_id=attempt_id, row_id=row_id, trajectory_kind=key.trajectory_kind,
+            required_roles=roles if require_direct_completion else None,
+        )
+        manifest_row_id = dispatch.row_id
+    else:
+        manifest_row_id = manifest.get("slurm", {}).get(row_field)
     if str(row_id) != str(manifest_row_id):
         raise ArtifactContractError("Extension failure row differs from attempt Slurm evidence")
     classification = record.get("classification")
@@ -211,6 +274,13 @@ def validate_extension_failure_record(
         raise ArtifactContractError("Extension failure classification is invalid")
     if retry_allowed and (classification != "infrastructure" or attempt_id >= 2):
         raise ArtifactContractError("Extension failure has an invalid retry authorization")
+    if (
+        backend == "direct"
+        and record.get("failure_phase") == "evaluator_lifecycle"
+        and _direct_lifecycle_deadline(run_root, manifest, record.get("evaluator_exit_status"))
+        and (classification != "hard_stop" or retry_allowed)
+    ):
+        raise ArtifactContractError("Direct deadline-terminated lifecycle cannot authorize a retry")
     if not isinstance(record.get("error_type"), str) or not isinstance(record.get("error"), str):
         raise ArtifactContractError("Extension failure lacks error evidence")
     if record.get("failure_phase") not in {
@@ -228,7 +298,7 @@ def reconcile_evaluator_exit(run_root: Path, **kwargs):
         run_root,
         exit_status=kwargs["exit_status"],
         **{
-            field: kwargs[field]
+            field: kwargs.get(field)
             for field in (
                 "attempt_id",
                 "row_id",
@@ -239,6 +309,7 @@ def reconcile_evaluator_exit(run_root: Path, **kwargs):
                 "max_steps",
                 "dataset",
                 "slurm",
+                "runner",
             )
         },
     )
@@ -261,18 +332,21 @@ def reconcile_evaluator_exit(run_root: Path, **kwargs):
             run_root,
             existing_failures[0],
             expected_row_id=int(kwargs["row_id"]),
+            require_direct_completion=False,
         )
         return writer.attempt_dir, "existing_failure"
 
     exit_status = int(kwargs["exit_status"])
     if exit_status < 0 or exit_status > 255:
         raise ValueError(f"Evaluator exit status must be in 0..255, got {exit_status}")
+    manifest = json.loads(writer.manifest_path.read_text())
+    direct_deadline = runner_backend(manifest) == "direct" and _direct_lifecycle_deadline(run_root, manifest, exit_status)
     artifact_error: Exception | None = None
     try:
         writer.validate_resume()
     except Exception as exc:
         artifact_error = exc
-    signal_exit = exit_status in {130, 137, 143}
+    signal_exit = exit_status in {130, 137, 143} and not direct_deadline
     classification = "infrastructure" if signal_exit else "hard_stop"
     retry_allowed = signal_exit and attempt_id < 2
     if artifact_error is not None:
@@ -281,6 +355,9 @@ def reconcile_evaluator_exit(run_root: Path, **kwargs):
         if writer.result_path.exists() or not signal_exit:
             classification = "hard_stop"
             retry_allowed = False
+    elif direct_deadline:
+        error_type = "DirectEvaluatorWallClockLimit"
+        error = "Evaluator reached the recorded direct execution deadline without a complete result; review required"
     elif exit_status == 0:
         error_type = "EvaluatorExitedWithoutEpisodeArtifact"
         error = "Evaluator exited with status 0 but produced no immutable episode result"
@@ -290,7 +367,6 @@ def reconcile_evaluator_exit(run_root: Path, **kwargs):
     else:
         error_type = "UnhandledEvaluatorLifecycleFailure"
         error = f"Evaluator exited with status {exit_status} before a complete result"
-    manifest = json.loads(writer.manifest_path.read_text())
     record = {
         **key.as_dict(),
         "protocol_version": PROTOCOL_VERSION,
@@ -306,13 +382,14 @@ def reconcile_evaluator_exit(run_root: Path, **kwargs):
         "scientific_actions_started": writer.trace_path.exists(),
         "environment_setup_completed": manifest.get("environment_setup_completed"),
         "episode_manifest_sha256": sha256_file(writer.manifest_path),
-        "slurm": manifest.get("slurm"),
+        **_manifest_execution(manifest),
     }
     store.record_failure(record)
     validate_extension_failure_record(
         run_root,
         record,
         expected_row_id=int(kwargs["row_id"]),
+        require_direct_completion=False,
     )
     return writer.attempt_dir, "recorded_failure"
 
@@ -378,6 +455,12 @@ def main() -> None:
         "visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
         "policy_port": args.policy_port,
     }
+    runner = None
+    if os.environ.get("KEYFRAME_RUNNER_BACKEND") == "direct":
+        runner = direct_runner_for_runtime(args.run_root)
+        if runner["dispatch"]["policy_port"] != args.policy_port:
+            raise ArtifactContractError("Direct reconciliation uses a different policy port")
+        slurm = None
     if args.evaluator_exit_status is None:
         if not args.error_type or not args.error:
             parser.error("readiness failure mode requires --error-type and --error")
@@ -394,6 +477,7 @@ def main() -> None:
             error_type=args.error_type,
             error=args.error,
             slurm=slurm,
+            runner=runner,
         )
         print(attempt_dir)
         return
@@ -410,6 +494,7 @@ def main() -> None:
         dataset=args.dataset,
         exit_status=args.evaluator_exit_status,
         slurm=slurm,
+        runner=runner,
     )
     print(f"{disposition}\t{attempt_dir}")
     if disposition != "complete":

@@ -9,8 +9,12 @@ import os
 from pathlib import Path
 from typing import Any
 
+from experiments.keyframe_neighborhood_sampling.direct_provenance import direct_runner_for_runtime
+from experiments.keyframe_neighborhood_sampling.direct_provenance import require_runtime_backend
+from experiments.keyframe_neighborhood_sampling.direct_provenance import runtime_direct_provenance
 from experiments.keyframe_oracle_sampling.artifacts import FORMAL_TASKS
 from experiments.keyframe_oracle_sampling.artifacts import ArtifactContractError
+from experiments.keyframe_oracle_sampling.artifacts import sha256_file
 
 EXTENSION_PROTOCOL_FAMILY = "keyframe_neighborhood_sampling_v1"
 EXTENSION_ARMS = ("OC3", "OC5")
@@ -119,9 +123,15 @@ def load_formal_submission_row(
         raise ArtifactContractError("Runtime attempt ID differs from extension submission")
     if int(submission.get("shard_id", -1)) != shard_id:
         raise ArtifactContractError("Runtime shard ID differs from extension submission")
-    if submission.get("slurm_array_job_id") != environ.get("SLURM_ARRAY_JOB_ID"):
+    backend = require_runtime_backend(submission, environ)
+    if backend == "slurm" and submission.get("slurm_array_job_id") != environ.get("SLURM_ARRAY_JOB_ID"):
         raise ArtifactContractError("Runtime Slurm array differs from extension submission")
     row_id = _mapped_submission_row_id(submission, array_task_id)
+    if backend == "direct":
+        runtime_direct_provenance(
+            run_root, stage="formal", attempt_id=attempt_id, row_id=row_id,
+            submission=submission, submission_path=submission_path, environ=environ,
+        )
     rows = load_formal_matrix(run_root / "protocol" / "formal_matrix.json")["rows"]
     if row_id < 0 or row_id >= len(rows):
         raise ArtifactContractError(f"Extension row {row_id} outside 0..{len(rows) - 1}")
@@ -154,11 +164,19 @@ def validate_formal_runtime_row_binding(
         else f"submission_record_attempt_{attempt_id:02d}_shard_*.json"
     )
     active_array_job = environ.get("SLURM_ARRAY_JOB_ID")
+    direct = environ.get("KEYFRAME_RUNNER_BACKEND") == "direct"
+    envelope = direct_runner_for_runtime(run_root, environ=environ) if direct else None
     matching_submissions = []
+    matching_paths = []
     for submission_path in sorted((run_root / "protocol").glob(pattern)):
         submission = json.loads(submission_path.read_text())
-        if submission.get("slurm_array_job_id") == active_array_job:
+        matches = (
+            sha256_file(submission_path) == envelope["dispatch"]["submission_plan_sha256"]
+            if direct else submission.get("slurm_array_job_id") == active_array_job
+        )
+        if matches:
             matching_submissions.append(submission)
+            matching_paths.append(submission_path)
     if len(matching_submissions) != 1:
         raise ArtifactContractError(
             "Runtime Slurm array does not match exactly one extension shard submission"
@@ -168,7 +186,18 @@ def validate_formal_runtime_row_binding(
         raise ArtifactContractError("Runtime submission is not an OC3/OC5 extension record")
     if int(submission.get("attempt_id", -1)) != attempt_id:
         raise ArtifactContractError("Runtime attempt ID differs from extension submission")
-    active_array_task = environ.get("SLURM_ARRAY_TASK_ID")
+    backend = require_runtime_backend(submission, environ)
+    if backend == "direct":
+        runtime_direct_provenance(
+            run_root, stage="formal", attempt_id=attempt_id, row_id=row_id,
+            submission=submission, submission_path=matching_paths[0], environ=environ,
+        )
+        try:
+            active_array_task = str(submission["row_ids"].index(row_id))
+        except (KeyError, ValueError) as exc:
+            raise ArtifactContractError("Direct formal row is absent from its submission") from exc
+    else:
+        active_array_task = environ.get("SLURM_ARRAY_TASK_ID")
     try:
         array_task_id = int(active_array_task) if active_array_task is not None else -1
     except ValueError as exc:

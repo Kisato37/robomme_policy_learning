@@ -158,14 +158,16 @@ def _compress_row_ids(row_ids: list[int]) -> str:
     return ",".join(ranges)
 
 
-def shard_rows(row_ids: list[int], *, max_concurrent: int) -> tuple[list[list[int]], int]:
-    """Split around the cluster's 1,000-array-element cap without oversubscription."""
+def shard_rows(
+    row_ids: list[int], *, max_concurrent: int, sequential: bool = False
+) -> tuple[list[list[int]], int]:
+    """Preserve 1,000-row shards under concurrent Slurm or sequential direct scheduling."""
     shards = [row_ids[start : start + MAX_ROWS_PER_ARRAY] for start in range(0, len(row_ids), MAX_ROWS_PER_ARRAY)]
     if not shards:
         raise ValueError("Formal extension submission cannot contain zero rows")
-    if len(shards) > max_concurrent:
+    if not sequential and len(shards) > max_concurrent:
         raise ValueError(f"{len(shards)} Slurm shards require --max-concurrent at least {len(shards)}")
-    per_shard_concurrent = max_concurrent // len(shards)
+    per_shard_concurrent = max_concurrent if sequential else max_concurrent // len(shards)
     if per_shard_concurrent < 1:
         raise AssertionError("Per-shard concurrency must remain positive")
     return shards, per_shard_concurrent
@@ -274,7 +276,11 @@ def build_submission(
         selected_rows = _validate_retry_rows(run_root, rows, attempt_id=attempt_id, row_ids=row_ids)
 
     log_dir = run_root / "slurm"
-    row_shards, per_shard_concurrent = shard_rows(selected_rows, max_concurrent=max_concurrent)
+    sequential = manifest.get("runner_backend") == "direct"
+    row_shards, per_shard_concurrent = shard_rows(
+        selected_rows, max_concurrent=max_concurrent, sequential=sequential
+    )
+    scheduling = {"shard_scheduling": "sequential"} if sequential else {}
     submissions: list[tuple[list[str], dict]] = []
     shard_count = len(row_shards)
     for shard_id, shard_row_ids in enumerate(row_shards):
@@ -296,6 +302,7 @@ def build_submission(
             str(shard_id),
         ]
         record = {
+            **scheduling,
             "schema_version": 1,
             "protocol_version": manifest["protocol_version"],
             "protocol_family": EXTENSION_PROTOCOL_FAMILY,
@@ -324,6 +331,7 @@ def build_submission(
         submissions.append((command, record))
 
     plan = {
+        **scheduling,
         "schema_version": 1,
         "protocol_version": manifest["protocol_version"],
         "protocol_family": EXTENSION_PROTOCOL_FAMILY,
@@ -437,6 +445,9 @@ def main() -> None:
         )
         return
 
+    manifest = json.loads((args.run_root / "protocol/launch_manifest.json").read_text())
+    if manifest.get("runner_backend") == "direct":
+        parser.error("This root requires submit_direct, not a Slurm submission")
     (args.run_root / "slurm").mkdir(parents=True, exist_ok=True)
     plan_path = submission_plan_path(args.run_root, args.attempt_id)
     if not plan_path.exists():

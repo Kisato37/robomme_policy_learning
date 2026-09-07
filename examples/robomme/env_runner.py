@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import subprocess
 from typing import Any
 import numpy as np
 
@@ -38,6 +39,7 @@ class EnvRunner:
         max_steps: int = 1300,
         dataset: str = "test",
         require_current_task_index: bool = False,
+        expected_render_gpu_uuid: str | None = None,
     ) -> None:
         if env_id not in TASK_NAME_LIST:
             raise ValueError(f"Environment ID {env_id} not in {TASK_NAME_LIST}")
@@ -49,6 +51,8 @@ class EnvRunner:
             raise ValueError(f"Unsupported benchmark dataset: {dataset}")
         self.dataset = resolved_dataset
         self.require_current_task_index = require_current_task_index
+        self.expected_render_gpu_uuid = expected_render_gpu_uuid
+        self.renderer_device: dict[str, Any] | None = None
         if require_current_task_index:
             # Install before make_env/reset so generated conditioning
             # demonstrations are labeled frame-by-frame before batching.
@@ -203,6 +207,73 @@ class EnvRunner:
         self.env = self.env_builder.make_env_for_episode(episode_id)
         self.episode_id = episode_id
         self.difficulty = self.env.unwrapped.difficulty
+        if self.expected_render_gpu_uuid is not None:
+            self._verify_renderer_device()
+
+    @staticmethod
+    def _normalize_pci_bus_id(value: str) -> str:
+        """Normalize SAPIEN/NVIDIA PCI domain widths without using GPU ordinals."""
+        if not isinstance(value, str):
+            raise RuntimeError("Renderer did not expose a physical PCI bus identity")
+        match = re.fullmatch(r"(?:pci:)?([0-9a-fA-F]{4,8}):([0-9a-fA-F]{2}):([0-9a-fA-F]{2})\.([0-7])", value)
+        if match is None:
+            raise RuntimeError(f"Invalid renderer PCI bus identity: {value!r}")
+        domain, bus, device, function = (int(part, 16) for part in match.groups())
+        return f"{domain:04x}:{bus:02x}:{device:02x}.{function}"
+
+    def _verify_renderer_device(self) -> None:
+        """Fail before reset/actions if auto rendering chose the wrong physical GPU.
+
+        Keep the pinned benchmark's rendering/physics parameters untouched.
+        CUDA_VISIBLE_DEVICES does not by itself prove Vulkan's physical choice;
+        use the constructed SAPIEN device's PCI identity, not a Vulkan ordinal.
+        """
+        backend = self.env.unwrapped.backend
+        device = backend.render_device
+        self.renderer_device = {
+            "render_backend": backend.render_backend,
+            "simulation_backend": backend.sim_backend,
+            "cuda_device_id": device.cuda_id,
+            "pci_bus_id": device.pci_string,
+            "gpu_uuid": None,
+            "expected_gpu_uuid": self.expected_render_gpu_uuid,
+            "can_render": device.can_render(),
+            "is_cuda": device.is_cuda(),
+            "matches_dispatch": False,
+        }
+        evidence = self.renderer_device
+        if (
+            not evidence["can_render"]
+            or not evidence["is_cuda"]
+            or evidence["cuda_device_id"] != 0
+            or evidence["render_backend"] != "sapien_cuda"
+            or evidence["simulation_backend"] != "physx_cpu"
+        ):
+            raise RuntimeError("Direct renderer/backend differs from the dispatched single-GPU CPU-physics runtime")
+        evidence["pci_bus_id"] = self._normalize_pci_bus_id(evidence["pci_bus_id"])
+        # This runs only in an explicitly dispatched simulator, after device
+        # construction. Importing EnvRunner never invokes a GPU discovery API.
+        inventory = subprocess.run(
+            ["nvidia-smi", "--query-gpu=uuid,pci.bus_id", "--format=csv,noheader,nounits"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout
+        matches = []
+        for line in inventory.splitlines():
+            values = [value.strip() for value in line.split(",")]
+            if len(values) != 2:
+                raise RuntimeError("NVIDIA physical GPU inventory has an invalid record")
+            gpu_uuid, pci_bus_id = values
+            if self._normalize_pci_bus_id(pci_bus_id) == evidence["pci_bus_id"]:
+                matches.append(gpu_uuid)
+        if len(matches) != 1:
+            raise RuntimeError("Renderer PCI identity does not resolve to exactly one physical NVIDIA GPU")
+        evidence["gpu_uuid"] = matches[0]
+        if evidence["gpu_uuid"] != self.expected_render_gpu_uuid:
+            raise RuntimeError("Renderer physical GPU UUID differs from its immutable direct dispatch")
+        evidence["matches_dispatch"] = True
 
     def get_init_obs(self) -> dict[str, Any]:
         """Reset env and return initial observation dict (images, wrist_images, states, task_goal)."""

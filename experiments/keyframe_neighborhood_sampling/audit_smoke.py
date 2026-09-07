@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Any
 
 from experiments.keyframe_neighborhood_sampling.architecture_smoke import validate_architecture_pass_report
+from experiments.keyframe_neighborhood_sampling.direct_provenance import runner_backend
+from experiments.keyframe_neighborhood_sampling.direct_provenance import validate_direct_attempt
+from experiments.keyframe_neighborhood_sampling.direct_provenance import validate_direct_submission
 from experiments.keyframe_neighborhood_sampling.formal_artifacts import smoke_submission_path
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_ARMS
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_PROTOCOL_FAMILY
@@ -89,7 +92,12 @@ def _validate_submission(
         raise ArtifactContractError("Extension smoke submission has invalid row IDs")
     if submission.get("trajectory_count") != len(rows):
         raise ArtifactContractError("Extension smoke submission row count mismatch")
-    if not isinstance(submission.get("slurm_array_job_id"), str) or not submission["slurm_array_job_id"]:
+    backend = runner_backend(submission)
+    if backend != runner_backend(launch):
+        raise ArtifactContractError("Smoke submission and launch runner backends differ")
+    if backend == "direct":
+        validate_direct_submission(submission, stage="development_smoke")
+    elif not isinstance(submission.get("slurm_array_job_id"), str) or not submission["slurm_array_job_id"]:
         raise ArtifactContractError("Extension smoke submission lacks a Slurm array ID")
     for field in (
         "checkpoint_unpacked_metadata_sha256",
@@ -204,6 +212,8 @@ def build_smoke_audit(run_root: Path) -> dict[str, Any]:
 
     architecture_submission = _load_object(paths["architecture_submission"], label="extension architecture submission")
     architecture = _load_object(paths["architecture"], label="extension architecture report")
+    if runner_backend(architecture) != runner_backend(launch):
+        raise ArtifactContractError("Extension architecture and smoke runner backends differ")
     validate_architecture_pass_report(
         architecture,
         run_root=run_root,
@@ -310,11 +320,21 @@ def build_smoke_audit(run_root: Path) -> dict[str, Any]:
         episode_manifest = _load_object(writer.manifest_path, label="extension episode manifest")
         if episode_manifest.get("protocol_family") != EXTENSION_PROTOCOL_FAMILY:
             raise ArtifactContractError("Extension episode manifest lacks protocol family")
-        slurm = episode_manifest.get("slurm")
-        if not isinstance(slurm, dict) or (
-            slurm.get("array_job_id") != submission["slurm_array_job_id"] or slurm.get("array_task_id") != str(row_id)
-        ):
-            raise ArtifactContractError("Extension smoke attempt Slurm binding mismatch")
+        if runner_backend(episode_manifest) != runner_backend(submission):
+            raise ArtifactContractError("Smoke attempt and submission runner backends differ")
+        if runner_backend(submission) == "direct":
+            if episode_manifest.get("environment_setup_completed") is not True:
+                raise ArtifactContractError("Completed direct smoke result lacks confirmed simulator setup")
+            validate_direct_attempt(
+                episode_manifest, run_root, attempt_id=attempt_id, row_id=row_id,
+                trajectory_kind=key.trajectory_kind, required_roles={"preflight", "policy", "evaluator", "reconcile"},
+            )
+        else:
+            slurm = episode_manifest.get("slurm")
+            if not isinstance(slurm, dict) or (
+                slurm.get("array_job_id") != submission["slurm_array_job_id"] or slurm.get("array_task_id") != str(row_id)
+            ):
+                raise ArtifactContractError("Extension smoke attempt Slurm binding mismatch")
         decision_report = _audit_neighborhood_trace(writer, key.arm)
         for field, value in decision_report.items():
             diagnostics[key.arm][field] += value
@@ -350,6 +370,7 @@ def build_smoke_audit(run_root: Path) -> dict[str, Any]:
     )
     return {
         "schema_version": 1,
+        **({"runner_backend": "direct"} if runner_backend(launch) == "direct" else {}),
         "protocol_version": PROTOCOL_VERSION,
         "protocol_family": EXTENSION_PROTOCOL_FAMILY,
         "audited_utc": utc_now(),

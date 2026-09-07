@@ -161,7 +161,14 @@ def _validate_architecture_source(
         raise RuntimeError("Architecture submission run_root mismatch")
     if report.get("run_root") != str(run_root.resolve()):
         raise RuntimeError("Architecture report run_root mismatch")
-    if not report.get("slurm_job_id") or (report.get("slurm_job_id") != submission.get("slurm_job_id")):
+    if report.get("runner_backend") == "direct" or submission.get("runner_backend") == "direct":
+        # Imported here because architecture_smoke reuses preparation identity helpers.
+        from experiments.keyframe_neighborhood_sampling.architecture_smoke import (  # noqa: PLC0415
+            validate_architecture_pass_report,
+        )
+
+        validate_architecture_pass_report(report, run_root=run_root, architecture_submission=submission)
+    elif not report.get("slurm_job_id") or (report.get("slurm_job_id") != submission.get("slurm_job_id")):
         raise RuntimeError("Architecture report/submission Slurm job mismatch")
     return report_path, submission_path
 
@@ -288,7 +295,13 @@ def prepare(
     development_smoke_run_root: Path,
     *,
     authorization_note: str,
+    runner_backend: str = "slurm",
+    gpu_layout: str = "separate",
 ) -> Path:
+    if runner_backend not in {"slurm", "direct"}:
+        raise ValueError("Unknown runner backend")
+    if gpu_layout not in {"separate", "colocated"} or (runner_backend != "direct" and gpu_layout != "separate"):
+        raise ValueError("Colocated GPU layout is supported only by the explicit direct backend")
     run_root = run_root.resolve()
     expected_parent = (REPO / RUN_PARENT_RELATIVE).resolve()
     if run_root.parent != expected_parent:
@@ -323,6 +336,15 @@ def prepare(
         checkpoint=checkpoint,
         checkpoint_content_tree=checkpoint_content_tree,
     )
+    for evidence_path in (architecture_report_path, development_audit_path):
+        evidence = json.loads(evidence_path.read_text())
+        if evidence.get("runner_backend", "slurm") != runner_backend:
+            raise RuntimeError("Formal backend must match its fresh architecture and development smoke")
+    if runner_backend == "direct":
+        for source_root in (architecture_run_root, development_smoke_run_root):
+            source_manifest = _read_json_object(source_root / "protocol/launch_manifest.json", label="smoke manifest")
+            if source_manifest.get("gpu_layout", "separate") != gpu_layout:
+                raise RuntimeError("Formal GPU layout must match its fresh architecture and development smoke")
     reference_identity = _validate_reference_results(checkpoint, checkpoint_content_tree)
     frozen_source_identity = {
         "frozen_analysis_source_relative": ANALYSIS_SOURCE_RELATIVE.as_posix(),
@@ -373,6 +395,7 @@ def prepare(
         manifest_path,
         {
             "run_id": run_root.name,
+            **({"runner_backend": "direct", "gpu_layout": gpu_layout} if runner_backend == "direct" else {}),
             "run_kind": "formal",
             "created_utc": utc_now(),
             "protocol_version": PROTOCOL_VERSION,
@@ -447,14 +470,19 @@ def prepare(
                 "authorization_note": authorization_note.strip(),
             },
             "command_template": (
+                "python -m experiments.keyframe_neighborhood_sampling.submit_direct "
+                "--run-root <run_root> --stage formal <reviewed-runtime-options> "
+                "--confirm-authorized-extension-v1"
+                if runner_backend == "direct" else
                 "python -m experiments.keyframe_neighborhood_sampling.submit_formal "
                 "--run-root <run_root> --confirm-authorized-extension-v1"
             ),
             "resources": {
                 "nodes_per_row": 1,
-                "gpus_per_row": 2,
+                "gpus_per_row": 1 if gpu_layout == "colocated" else 2,
                 "max_concurrent_rows": 4,
-                "ports": "20000 + (SLURM_JOB_ID mod 20000)",
+                "ports": ("inherited loopback listening socket" if runner_backend == "direct"
+                          else "20000 + (SLURM_JOB_ID mod 20000)"),
             },
             "submitted": False,
         },
@@ -470,6 +498,8 @@ def main() -> None:
     parser.add_argument("--development-smoke-run-root", type=Path)
     parser.add_argument("--authorization-note")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--runner-backend", choices=("slurm", "direct"), default="slurm")
+    parser.add_argument("--gpu-layout", choices=("separate", "colocated"), default="separate")
     args = parser.parse_args()
     if args.dry_run:
         print(json.dumps(dry_run_contract(), indent=2, sort_keys=True))
@@ -489,10 +519,16 @@ def main() -> None:
         args.architecture_run_root,
         args.development_smoke_run_root,
         authorization_note=args.authorization_note,
+        runner_backend=args.runner_backend,
+        gpu_layout=args.gpu_layout,
+    )
+    entry = (
+        "submit_direct --stage formal <reviewed-runtime-options>"
+        if args.runner_backend == "direct" else "submit_formal"
     )
     print(
         "Prepared without submission. Validate and submit only through:\n"
-        "python -m experiments.keyframe_neighborhood_sampling.submit_formal "
+        f"python -m experiments.keyframe_neighborhood_sampling.{entry} "
         f"--run-root {args.run_root} --confirm-authorized-extension-v1\n"
         f"Formal seed table: {seed_path}"
     )

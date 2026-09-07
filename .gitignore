@@ -210,3 +210,8 @@ marimo/_lsp/
 __marimo__/
 
 *local.sh
+
+# Runtime checkpoints, raw trajectories, and host-local data symlinks.
+# No trailing slash: ignore either a real directory or a symlink named runs.
+# Reviewed lightweight published summaries stay under the separate results/ tree.
+/runs

@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from experiments.keyframe_neighborhood_sampling.direct_provenance import require_runtime_backend
+from experiments.keyframe_neighborhood_sampling.direct_provenance import runtime_direct_provenance
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_ARMS
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_PROTOCOL_FAMILY
 from experiments.keyframe_oracle_sampling.artifacts import FORMAL_TASKS
@@ -120,10 +122,16 @@ def validate_runtime_row_binding(
         raise ArtifactContractError("Submission is not an OC3/OC5 smoke record")
     if int(submission.get("attempt_id", -1)) != attempt_id:
         raise ArtifactContractError("Runtime attempt ID differs from the extension smoke submission")
-    if submission.get("slurm_array_job_id") != environ.get("SLURM_ARRAY_JOB_ID"):
+    backend = require_runtime_backend(submission, environ)
+    if backend == "direct":
+        runtime_direct_provenance(
+            run_root, stage="development_smoke", attempt_id=attempt_id, row_id=row_id,
+            submission=submission, submission_path=submission_path, environ=environ,
+        )
+    elif submission.get("slurm_array_job_id") != environ.get("SLURM_ARRAY_JOB_ID"):
         raise ArtifactContractError("Runtime Slurm array differs from the extension smoke submission")
 
-    active_array_task = environ.get("SLURM_ARRAY_TASK_ID")
+    active_array_task = environ.get("KEYFRAME_SMOKE_ROW_ID" if backend == "direct" else "SLURM_ARRAY_TASK_ID")
     try:
         active_row_id = int(active_array_task) if active_array_task is not None else -1
     except ValueError as exc:

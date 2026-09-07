@@ -22,6 +22,7 @@ from env_runner import EnvRunner
 from subgoal_predictor import build_subgoal_predictor, SubgoalPredictorBase
 from evaluation_records import EpisodeResultWriter
 
+from experiments.keyframe_neighborhood_sampling.direct_provenance import direct_runner_for_runtime
 from experiments.keyframe_neighborhood_sampling.formal_artifacts import (
     EXTENSION_PROTOCOL_VERSION,
     validate_prepared_formal_root as validate_extension_prepared_formal_root,
@@ -154,12 +155,29 @@ class Args:
     keyframe_attempt_id: int = 0
     keyframe_trajectory_kind: str = "formal"
     keyframe_formal_authorization: str = ""
+    # Direct execution is opt-in and independently bound to the launcher's
+    # immutable dispatch. These arguments never synthesize runtime environment.
+    direct_dispatch_record: str = ""
+    direct_dispatch_sha256: str = ""
     # this can accelerate the evaluation process for symbolic memory
     # In our experiments, we just set this to 1
 
 
+def _direct_dispatch_requested(args: Args) -> bool:
+    return bool(
+        getattr(args, "direct_dispatch_record", "")
+        or getattr(args, "direct_dispatch_sha256", "")
+        or os.environ.get("KEYFRAME_RUNNER_BACKEND") == "direct"
+        or os.environ.get("KEYFRAME_DIRECT_DISPATCH_PATH")
+        or os.environ.get("KEYFRAME_DIRECT_DISPATCH_SHA256")
+    )
+
+
 def validate_keyframe_args(args: Args) -> None:
+    direct = _direct_dispatch_requested(args)
     if not args.keyframe_selector_arm and not args.keyframe_run_root:
+        if direct:
+            raise ValueError("Direct dispatch is restricted to governed OC3/OC5 evaluation")
         return
     if not args.keyframe_selector_arm or not args.keyframe_run_root:
         raise ValueError("Keyframe selector arm and run root must be configured together")
@@ -201,6 +219,62 @@ def validate_keyframe_args(args: Args) -> None:
             )
     elif args.keyframe_formal_authorization:
         raise ValueError("Development smoke may not carry a formal authorization digest")
+    if os.environ.get("KEYFRAME_RUNNER_BACKEND", "slurm") not in {"slurm", "direct"}:
+        raise ValueError("Unknown keyframe runner backend")
+    if direct:
+        if _keyframe_protocol_route(args.keyframe_selector_arm) != "extension":
+            raise ValueError("Direct dispatch is restricted to governed OC3/OC5 evaluation")
+        path = getattr(args, "direct_dispatch_record", "")
+        digest = getattr(args, "direct_dispatch_sha256", "")
+        if not path or not digest:
+            raise ValueError("Direct evaluation requires both dispatch record and SHA256 arguments")
+        if not Path(path).is_absolute() or str(Path(path).resolve()) != path:
+            raise ValueError("Direct dispatch record must use its canonical absolute path")
+        if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+            raise ValueError("Direct dispatch SHA256 must be a lowercase 64-character digest")
+        if (
+            os.environ.get("KEYFRAME_RUNNER_BACKEND") != "direct"
+            or os.environ.get("KEYFRAME_DIRECT_DISPATCH_PATH") != path
+            or os.environ.get("KEYFRAME_DIRECT_DISPATCH_SHA256") != digest
+        ):
+            raise ValueError("Direct dispatch arguments must match the explicit launcher environment")
+        tasks = args.only_tasks.split(",")
+        episodes = args.episode_ids.split(",")
+        if len(tasks) != 1 or not tasks[0] or tasks[0] != tasks[0].strip():
+            raise ValueError("Direct evaluation requires exactly one explicit task")
+        if len(episodes) != 1 or not episodes[0].isdigit():
+            raise ValueError("Direct evaluation requires exactly one explicit nonnegative episode ID")
+
+
+def _load_direct_evaluator_runner(args: Args) -> dict[str, Any] | None:
+    """Validate the real evaluator allocation before creating output or environments."""
+    if not _direct_dispatch_requested(args):
+        return None
+    runner = direct_runner_for_runtime(Path(args.keyframe_run_root))
+    dispatch = runner["dispatch"]
+    expected_stage = "formal" if args.keyframe_trajectory_kind == "formal" else "development_smoke"
+    if (
+        dispatch["stage"] != expected_stage
+        or dispatch["attempt_id"] != args.keyframe_attempt_id
+        or dispatch["policy_port"] != args.port
+    ):
+        raise ValueError("Direct evaluator stage, attempt, or policy port differs from its dispatch")
+    if os.environ.get("CUDA_VISIBLE_DEVICES") != dispatch["gpu_uuids"][1]:
+        raise ValueError("Direct evaluator must see only its dispatched simulator GPU UUID")
+    return runner
+
+
+def _keyframe_runtime_row_id(args: Args, evaluator: "EpisodeEvaluator") -> int:
+    runner = getattr(evaluator, "_validated_direct_runner", None)
+    if runner is not None:
+        return runner["dispatch"]["row_id"]
+    if _direct_dispatch_requested(args):
+        raise RuntimeError("Direct evaluator row binding requires a validated dispatch")
+    return int(
+        os.environ.get("KEYFRAME_FORMAL_ROW_ID", "-1")
+        if args.keyframe_trajectory_kind == "formal"
+        else os.environ.get("SLURM_ARRAY_TASK_ID", "-1")
+    )
 
 
 class EpisodeEvaluator:
@@ -211,6 +285,7 @@ class EpisodeEvaluator:
         self._seed_table_payload = None
         self._seed_lookup = None
         self._validated_run_manifest = None
+        self._validated_direct_runner = None
         if args.keyframe_selector_arm:
             if not args.keyframe_seed_table:
                 raise ValueError("A keyframe selector run requires --args.keyframe-seed-table")
@@ -575,18 +650,38 @@ def _keyframe_attempt_manifest(
             "protocol_version": protocol_version,
             "protocol_family": protocol_family,
         }
-    slurm = {
-        "job_id": os.environ.get("SLURM_JOB_ID"),
-        "array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID"),
-        "array_task_id": os.environ.get("SLURM_ARRAY_TASK_ID"),
-        "formal_matrix_row_id": os.environ.get("KEYFRAME_FORMAL_ROW_ID"),
-        "node": os.environ.get("SLURMD_NODENAME"),
-        "visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
-        "policy_port": args.port,
-    }
-    if route == "extension" and args.keyframe_trajectory_kind != "formal":
-        slurm.pop("formal_matrix_row_id")
-        slurm["smoke_matrix_row_id"] = os.environ.get("KEYFRAME_SMOKE_ROW_ID")
+    direct_runner = getattr(evaluator, "_validated_direct_runner", None)
+    if direct_runner is not None:
+        if route != "extension" or not _direct_dispatch_requested(args):
+            raise RuntimeError("Direct provenance cannot be attached to the Slurm evaluation route")
+        # Copy the validated immutable identity; never infer host/GPU identity
+        # from scheduler-like placeholders or mutable caller-supplied labels.
+        execution_provenance = {
+            "runner_backend": "direct",
+            "runner": json.loads(json.dumps(direct_runner)),
+            "renderer_device": getattr(env_runner, "renderer_device", None),
+        }
+        if environment_setup_completed and (
+            execution_provenance["renderer_device"] is None
+            or execution_provenance["renderer_device"].get("matches_dispatch") is not True
+        ):
+            raise RuntimeError("Completed direct environment setup requires verified physical renderer identity")
+    else:
+        if _direct_dispatch_requested(args):
+            raise RuntimeError("Direct attempt manifest requires a validated dispatch")
+        slurm = {
+            "job_id": os.environ.get("SLURM_JOB_ID"),
+            "array_job_id": os.environ.get("SLURM_ARRAY_JOB_ID"),
+            "array_task_id": os.environ.get("SLURM_ARRAY_TASK_ID"),
+            "formal_matrix_row_id": os.environ.get("KEYFRAME_FORMAL_ROW_ID"),
+            "node": os.environ.get("SLURMD_NODENAME"),
+            "visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "policy_port": args.port,
+        }
+        if route == "extension" and args.keyframe_trajectory_kind != "formal":
+            slurm.pop("formal_matrix_row_id")
+            slurm["smoke_matrix_row_id"] = os.environ.get("KEYFRAME_SMOKE_ROW_ID")
+        execution_provenance = {"slurm": slurm}
     return {
         **protocol_identity,
         "dataset": env_runner.dataset,
@@ -599,7 +694,7 @@ def _keyframe_attempt_manifest(
         "resolved_difficulty_hint": env_runner.resolved_difficulty_hint,
         "difficulty": None if difficulty is None else str(difficulty),
         "environment_setup_completed": environment_setup_completed,
-        "slurm": slurm,
+        **execution_provenance,
     }
 
 
@@ -620,7 +715,25 @@ def _extension_failure_provenance(
     ):
         raise RuntimeError("Extension attempt manifest changed protocol identity")
     row_field = "formal_matrix_row_id" if args.keyframe_trajectory_kind == "formal" else "smoke_matrix_row_id"
-    row_value = manifest.get("slurm", {}).get(row_field)
+    direct_runner = getattr(evaluator, "_validated_direct_runner", None)
+    if direct_runner is not None:
+        if (
+            manifest.get("runner_backend") != "direct"
+            or manifest.get("runner") != direct_runner
+            or "slurm" in manifest
+        ):
+            raise RuntimeError("Extension failure manifest changed its validated direct runner")
+        row_value = direct_runner["dispatch"]["row_id"]
+        execution_provenance = {
+            "runner_backend": "direct",
+            "runner": manifest["runner"],
+            "renderer_device": manifest.get("renderer_device"),
+        }
+    else:
+        if _direct_dispatch_requested(args) or "runner" in manifest or "runner_backend" in manifest:
+            raise RuntimeError("Extension failure provenance has no matching validated direct runner")
+        row_value = manifest.get("slurm", {}).get(row_field)
+        execution_provenance = {"slurm": manifest.get("slurm")}
     return {
         "protocol_version": EXTENSION_PROTOCOL_VERSION,
         "protocol_family": EXTENSION_PROTOCOL_FAMILY,
@@ -629,7 +742,7 @@ def _extension_failure_provenance(
         "scientific_actions_started": attempt_writer.trace_path.exists(),
         "environment_setup_completed": manifest.get("environment_setup_completed"),
         "episode_manifest_sha256": sha256_file(attempt_writer.manifest_path),
-        "slurm": manifest.get("slurm"),
+        **execution_provenance,
     }
 
 
@@ -637,6 +750,7 @@ def evaluate(args: Args):
     """Main evaluation function."""
     check_args(args)
     validate_keyframe_args(args)
+    direct_runner = _load_direct_evaluator_runner(args)
 
     save_dir = setup_save_directory(args)
     video_save_dir = save_dir / "videos"
@@ -655,6 +769,7 @@ def evaluate(args: Args):
 
     subgoal_predictor = build_subgoal_predictor(args, save_dir)
     evaluator = EpisodeEvaluator(args, save_dir)
+    evaluator._validated_direct_runner = direct_runner  # noqa: SLF001 - evaluator-local validated runtime evidence
     result_writer = EpisodeResultWriter(args.dual_memory_run_root) if args.dual_memory_run_root else None
     keyframe_store = RunArtifactStore(args.keyframe_run_root) if args.keyframe_run_root else None
     if bool(args.keyframe_selector_arm) != bool(keyframe_store):
@@ -689,6 +804,7 @@ def evaluate(args: Args):
                 max_steps=args.max_steps,
                 dataset=args.dataset,
                 require_current_task_index=bool(args.keyframe_selector_arm),
+                **({"expected_render_gpu_uuid": direct_runner["dispatch"]["gpu_uuids"][1]} if direct_runner else {}),
             )
             num_episodes = env_runner.num_episodes
             episode_ids = (
@@ -730,11 +846,7 @@ def evaluate(args: Args):
                         row_validator(
                             args.keyframe_run_root,
                             attempt_id=args.keyframe_attempt_id,
-                            row_id=int(
-                                os.environ.get("KEYFRAME_FORMAL_ROW_ID", "-1")
-                                if args.keyframe_trajectory_kind == "formal"
-                                else os.environ.get("SLURM_ARRAY_TASK_ID", "-1")
-                            ),
+                            row_id=_keyframe_runtime_row_id(args, evaluator),
                             task=task_name,
                             episode_id=episode_id,
                             arm=args.keyframe_selector_arm,

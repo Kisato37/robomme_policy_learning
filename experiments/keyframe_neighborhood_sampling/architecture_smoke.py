@@ -13,6 +13,11 @@ from pathlib import Path
 import sys
 from typing import Any
 
+from experiments.keyframe_neighborhood_sampling.direct_provenance import audit_direct_completion
+from experiments.keyframe_neighborhood_sampling.direct_provenance import require_runtime_backend
+from experiments.keyframe_neighborhood_sampling.direct_provenance import runner_backend
+from experiments.keyframe_neighborhood_sampling.direct_provenance import runtime_direct_provenance
+from experiments.keyframe_neighborhood_sampling.direct_provenance import validate_direct_runner
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_ARMS
 from experiments.keyframe_neighborhood_sampling.formal_matrix import EXTENSION_PROTOCOL_FAMILY
 from experiments.keyframe_neighborhood_sampling.prepare_formal import repository_state
@@ -60,9 +65,12 @@ def validate_architecture_pass_report(
     *,
     run_root: Path,
     architecture_submission: dict[str, Any],
+    require_direct_completion: bool = True,
 ) -> None:
     """Validate the extension PASS artifact without accepting parent evidence."""
-    missing = [field for field in REPORT_REQUIRED_FIELDS if field not in report]
+    backend = runner_backend(report)
+    required = [field for field in REPORT_REQUIRED_FIELDS if field != "slurm_job_id" or backend == "slurm"]
+    missing = [field for field in required if field not in report]
     if missing:
         raise RuntimeError(f"Extension architecture report lacks fields: {missing}")
     expected_identity = {
@@ -119,15 +127,26 @@ def validate_architecture_pass_report(
         "arms": list(EXTENSION_ARMS),
         "repository_commit_sha": commit,
         "run_root": str(run_root.resolve()),
-        "slurm_job_id": report["slurm_job_id"],
         "checkpoint_unpacked_metadata_sha256": report["checkpoint_unpacked_metadata_sha256"],
         "checkpoint_content_tree_algorithm": report["checkpoint_content_tree_algorithm"],
         "checkpoint_unpacked_content_tree_sha256": report["checkpoint_unpacked_content_tree_sha256"],
     }
+    if backend == "slurm":
+        submission_expected["slurm_job_id"] = report["slurm_job_id"]
+    if runner_backend(architecture_submission) != backend:
+        raise RuntimeError("Architecture report/submission runner backend mismatch")
     if any(
         architecture_submission.get(field) != expected_value for field, expected_value in submission_expected.items()
     ):
         raise RuntimeError("Extension architecture report/submission binding mismatch")
+    if backend == "direct":
+        validate_direct_runner(
+            report.get("runner", {}), run_root, stage="architecture_smoke", attempt_id=0, row_id=None,
+            submission=architecture_submission,
+            submission_path=run_root / "protocol/architecture_submission_record.json",
+        )
+        if require_direct_completion:
+            audit_direct_completion(report["runner"], run_root, required_roles={"architecture"})
 
 
 def _dry_case(arm: str, history_length: int) -> dict[str, Any]:
@@ -149,7 +168,7 @@ def dry_run_contract() -> dict[str, Any]:
         "checkpoint_unpacked_metadata_sha256": "0" * 64,
         "checkpoint_content_tree_algorithm": _base.CHECKPOINT_CONTENT_TREE_ALGORITHM,
         "checkpoint_unpacked_content_tree_sha256": "0" * 64,
-        "run_root": str(REPO / "runs/keyframe_neighborhood_sampling/dry-run-contract"),
+        "run_root": str((REPO / "runs/keyframe_neighborhood_sampling/dry-run-contract").resolve()),
         "slurm_job_id": "dry-run-job",
         "case_count": CASE_COUNT,
         "cases": cases,
@@ -233,6 +252,9 @@ def _validate_live_bundle(run_root: Path) -> tuple[dict[str, Any], dict[str, Any
         raise RuntimeError("Prepared root and live extension checkout use different commits")
     validate_environment_contract(manifest)
 
+    backend = require_runtime_backend(submission)
+    if runner_backend(manifest) != backend:
+        raise RuntimeError("Architecture manifest/submission runner backend mismatch")
     active_job = os.environ.get("SLURM_JOB_ID")
     expected_submission = {
         "protocol_version": PROTOCOL_VERSION,
@@ -241,11 +263,19 @@ def _validate_live_bundle(run_root: Path) -> tuple[dict[str, Any], dict[str, Any
         "arms": list(EXTENSION_ARMS),
         "repository_commit_sha": state["commit_sha"],
         "run_root": str(run_root.resolve()),
-        "slurm_job_id": active_job,
         "launch_manifest_sha256": sha256_file(manifest_path),
     }
-    if not active_job or any(submission.get(field) != expected for field, expected in expected_submission.items()):
+    if backend == "slurm":
+        expected_submission["slurm_job_id"] = active_job
+    if (backend == "slurm" and not active_job) or any(
+        submission.get(field) != expected for field, expected in expected_submission.items()
+    ):
         raise RuntimeError("Architecture gate is outside its recorded extension Slurm job")
+    if backend == "direct":
+        runtime_direct_provenance(
+            run_root, stage="architecture_smoke", attempt_id=0, row_id=None,
+            submission=submission, submission_path=submission_path,
+        )
     return manifest, submission
 
 
@@ -258,6 +288,18 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
     if not any(device.platform == "gpu" for device in jax.devices()):
         raise RuntimeError(f"Extension architecture smoke requires a GPU, got {jax.devices()}")
     manifest, submission = _validate_live_bundle(run_root)
+    execution_provenance = (
+        {
+            "runner_backend": "direct",
+            "runner": runtime_direct_provenance(
+                run_root, stage="architecture_smoke", attempt_id=0, row_id=None,
+                submission=submission, submission_path=run_root / "protocol/architecture_submission_record.json",
+            ),
+        }
+        if runner_backend(submission) == "direct"
+        else {"slurm_job_id": os.environ["SLURM_JOB_ID"]}
+    )
+    report.update(execution_provenance)
     checkpoint_dir = REPO / CHECKPOINT_RELATIVE
     checkpoint = checkpoint_identity(checkpoint_dir)
     content_tree = checkpoint_content_tree_identity(checkpoint_dir)
@@ -361,7 +403,7 @@ def _run_architecture(report: dict[str, Any], run_root: Path) -> None:
             "checkpoint_unpacked_metadata_sha256": checkpoint["metadata_sha256"],
             "checkpoint_content_tree_algorithm": content_tree["algorithm"],
             "checkpoint_unpacked_content_tree_sha256": content_tree["content_tree_sha256"],
-            "slurm_job_id": os.environ["SLURM_JOB_ID"],
+            **execution_provenance,
             "device_count": jax.device_count(),
             "devices": [str(device) for device in jax.devices()],
             "case_count": len(cases),
@@ -411,7 +453,9 @@ def main() -> None:
         _run_architecture(report, run_root)
         report["passed"] = True
         submission = json.loads((run_root / "protocol/architecture_submission_record.json").read_text())
-        validate_architecture_pass_report(report, run_root=run_root, architecture_submission=submission)
+        validate_architecture_pass_report(
+            report, run_root=run_root, architecture_submission=submission, require_direct_completion=False
+        )
     except BaseException as exc:
         failure = exc
         report["failure"] = {"type": type(exc).__name__, "message": str(exc)}

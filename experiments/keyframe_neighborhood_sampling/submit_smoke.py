@@ -265,6 +265,9 @@ def main() -> None:
         print(json.dumps({**record, "submits_jobs": False}, indent=2, sort_keys=True))
         return
 
+    manifest = json.loads((args.run_root / "protocol/launch_manifest.json").read_text())
+    if manifest.get("runner_backend") == "direct":
+        parser.error("This root requires submit_direct, not a Slurm submission")
     (args.run_root / "slurm").mkdir(parents=True, exist_ok=True)
     job_id = subprocess.check_output(command, cwd=REPO, text=True).strip().split(";")[0]
     record["slurm_array_job_id"] = job_id
