@@ -85,6 +85,14 @@ the resident model's own utilization/memory is expected. Ongoing telemetry,
 combined host-memory guards, process/deadline guards and error handling remain.
 No artificial GPU load or unused VRAM reservation is introduced.
 
+Shared admission also requires NVIDIA compute mode `Default`; a populated
+`Exclusive_Process` device cannot be shared even with ample VRAM. Never change
+that system setting. Following the user's efficiency priority, low utilization
+is a preference rather than an absolute requirement: a run may explicitly record
+`--shared-max-utilization 100` when all shareable cards are busy. The resident
+validation uses a recorded 32,768-MiB startup headroom check. Neither condition
+is re-applied against the resident model between rows.
+
 Each row retains a fresh simulator process, separate result/dispatch/seed record,
 and a lightweight `policy` transport proxy with its own lifecycle. That proxy is
 not another model: it forwards msgpack requests and replies unchanged to the

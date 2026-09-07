@@ -185,24 +185,29 @@ def check_gpu_admission(gpu_uuids: tuple[str, ...], profile: dict) -> dict:
         check_idle_gpus(gpu_uuids)
         return {"policy": policy, "checked_utc": utc_now(), "gpu_uuids": list(gpu_uuids)}
     output = subprocess.check_output(
-        ["nvidia-smi", "--query-gpu=uuid,memory.free,utilization.gpu", "--format=csv,noheader,nounits"],
+        ["nvidia-smi", "--query-gpu=uuid,memory.free,utilization.gpu,compute_mode", "--format=csv,noheader,nounits"],
         text=True,
         timeout=10,
     )
     inventory = {}
     for line in output.splitlines():
-        gpu, free, utilization = (value.strip() for value in line.split(","))
+        fields = [value.strip() for value in line.split(",")]
+        if len(fields) != 4:
+            raise ValueError("GPU inventory lacks explicit compute mode")
+        gpu, free, utilization, compute_mode = fields
         free, utilization = int(free), int(utilization)
         if gpu in inventory or free < 0 or not 0 <= utilization <= 100:
             raise ValueError("Invalid or duplicated GPU inventory")
-        inventory[gpu] = {"gpu_uuid": gpu, "free_memory_mib": free, "utilization_gpu_percent": utilization}
+        inventory[gpu] = {"gpu_uuid": gpu, "free_memory_mib": free, "utilization_gpu_percent": utilization,
+                          "compute_mode": compute_mode}
     devices = []
     for gpu in dict.fromkeys(gpu_uuids):
         if gpu not in inventory:
             raise ValueError(f"Declared GPU no longer exists: {gpu}")
         device = inventory[gpu]
         if (
-            device["free_memory_mib"] < policy["min_free_memory_mib"]
+            device["compute_mode"] != "Default"
+            or device["free_memory_mib"] < policy["min_free_memory_mib"]
             or device["utilization_gpu_percent"] > policy["max_utilization_gpu_percent"]
         ):
             raise ResourceBusyError(f"Shared GPU headroom/usage check failed; no other job is touched: {device}")
