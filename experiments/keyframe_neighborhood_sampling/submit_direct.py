@@ -31,6 +31,7 @@ from experiments.keyframe_neighborhood_sampling.direct_runtime import LinuxProce
 from experiments.keyframe_neighborhood_sampling.direct_runtime import OwnedProcessGroup
 from experiments.keyframe_neighborhood_sampling.direct_runtime import PortReservation
 from experiments.keyframe_neighborhood_sampling.direct_runtime import ResourceBusyError
+from experiments.keyframe_neighborhood_sampling.gpu_admission import admission_policy
 from experiments.keyframe_neighborhood_sampling.gpu_telemetry import GpuTelemetry
 from experiments.keyframe_neighborhood_sampling.runner_contract import DirectDispatch
 from experiments.keyframe_neighborhood_sampling.runner_contract import process_exit_record
@@ -141,6 +142,7 @@ def runtime_profile(environment_sh: Path, graphics_wrapper: Path, lock_directory
 
 
 def verify_runtime_profile(profile: dict) -> None:
+    admission_policy(profile)
     for key in ("environment_sh", "graphics_wrapper"):
         if sha256_file(Path(profile[key])) != profile[f"{key}_sha256"]:
             raise RuntimeError(f"Prepared runtime script changed: {key}")
@@ -169,6 +171,38 @@ def check_idle_gpus(gpu_uuids: tuple[str, ...]) -> None:
         used, utilization = inventory[gpu]
         if gpu in occupied or used > 128 or utilization != 0:
             raise ResourceBusyError(f"GPU is in use; nothing will be canceled: {gpu}")
+
+
+def check_gpu_admission(gpu_uuids: tuple[str, ...], profile: dict) -> dict:
+    """Check immediately before launch; neither reserve VRAM nor touch other jobs."""
+    policy = admission_policy(profile)
+    if policy["mode"] == "exclusive":
+        check_idle_gpus(gpu_uuids)
+        return {"policy": policy, "checked_utc": utc_now(), "gpu_uuids": list(gpu_uuids)}
+    output = subprocess.check_output(
+        ["nvidia-smi", "--query-gpu=uuid,memory.free,utilization.gpu", "--format=csv,noheader,nounits"],
+        text=True,
+        timeout=10,
+    )
+    inventory = {}
+    for line in output.splitlines():
+        gpu, free, utilization = (value.strip() for value in line.split(","))
+        free, utilization = int(free), int(utilization)
+        if gpu in inventory or free < 0 or not 0 <= utilization <= 100:
+            raise ValueError("Invalid or duplicated GPU inventory")
+        inventory[gpu] = {"gpu_uuid": gpu, "free_memory_mib": free, "utilization_gpu_percent": utilization}
+    devices = []
+    for gpu in dict.fromkeys(gpu_uuids):
+        if gpu not in inventory:
+            raise ValueError(f"Declared GPU no longer exists: {gpu}")
+        device = inventory[gpu]
+        if (
+            device["free_memory_mib"] < policy["min_free_memory_mib"]
+            or device["utilization_gpu_percent"] > policy["max_utilization_gpu_percent"]
+        ):
+            raise ResourceBusyError(f"Shared GPU headroom/usage check failed; no other job is touched: {device}")
+        devices.append(device)
+    return {"policy": policy, "checked_utc": utc_now(), "devices": devices, "exclusive_capacity_guaranteed": False}
 
 
 def build_direct_submission(
@@ -216,6 +250,12 @@ def build_direct_submission(
         "--lock-directory",
         profile["lock_directory"],
     ]
+    admission = admission_policy(profile)
+    if admission["mode"] == "shared":
+        command.extend([
+            "--allow-shared-gpu", "--shared-min-free-mib", str(admission["min_free_memory_mib"]),
+            "--shared-max-utilization", str(admission["max_utilization_gpu_percent"]),
+        ])
     for pair in allocations:
         command.extend(["--gpu-allocation", ",".join(pair)])
     if row_ids:
@@ -660,12 +700,12 @@ def execute_one(
     )
     if directory.exists():
         raise FileExistsError("Existing execution is pending/completed, not permission to repeat it")
-    # Fail without holding a device if other jobs are present. Do not queue
-    # indefinitely with unused GPUs reserved.
+    # Recheck the explicit exclusive/shared rule before and after our own lease.
+    # This advisory lease prevents overlap with our jobs, not other users' jobs.
     physical_gpus = tuple(dict.fromkeys(gpu_uuids))
-    check_idle_gpus(physical_gpus)
+    check_gpu_admission(physical_gpus, profile)
     with GpuLease(Path(profile["lock_directory"]), physical_gpus) as lease:
-        check_idle_gpus(physical_gpus)
+        admission_snapshot = check_gpu_admission(physical_gpus, profile)
         if stop.is_set():
             return
         with PortReservation() as port, ExitStack() as monitors:
@@ -689,6 +729,7 @@ def execute_one(
                 gpu_layout=record.get("gpu_layout", "separate"),
             )
             directory.mkdir(parents=True, exist_ok=False)
+            write_once_record(directory / "gpu_admission.json", admission_snapshot)
             execution = Execution(dispatch, directory, profile, lease, stop)
             monitors.enter_context(GpuTelemetry(directory / "gpu_telemetry.jsonl", physical_gpus))
             try:
@@ -835,6 +876,9 @@ def main() -> None:
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--stage", choices=("architecture_smoke", "development_smoke", "formal"), required=True)
     parser.add_argument("--gpu-layout", choices=("separate", "colocated"), default="separate")
+    parser.add_argument("--allow-shared-gpu", action="store_true", help="Explicitly authorized sharing only; requires colocated layout")
+    parser.add_argument("--shared-min-free-mib", type=int, default=49152)
+    parser.add_argument("--shared-max-utilization", type=int, default=80)
     parser.add_argument(
         "--gpu-allocation",
         action="append",
@@ -864,6 +908,12 @@ def main() -> None:
     root = args.run_root.resolve()
     profile = runtime_profile(args.environment_sh, args.graphics_wrapper, args.lock_directory)
     profile["gpu_layout"] = args.gpu_layout
+    if args.allow_shared_gpu:
+        profile["gpu_admission"] = {
+            "mode": "shared",
+            "min_free_memory_mib": args.shared_min_free_mib,
+            "max_utilization_gpu_percent": args.shared_max_utilization,
+        }
     rows = tuple(int(value) for value in args.rows.split(",")) if args.rows else None
     records, plan = build_direct_submission(root, args.stage, allocations, profile, args.attempt_id, rows)
     if args.dry_run:
@@ -881,10 +931,13 @@ def main() -> None:
             )
         )
         return
-    # Check occupancy before publishing a plan; an already busy host should not
-    # turn a pristine prepared run into an uncertain partial execution.
-    for pair in allocations:
-        check_idle_gpus(tuple(pair))
+    # Check capacity before publication; record admission without claiming that
+    # other users' future memory/compute demand is reserved or predictable.
+    snapshots = [check_gpu_admission(tuple(dict.fromkeys(pair)), profile) for pair in allocations]
+    for _, record in records:
+        record["gpu_admission_snapshots"] = snapshots
+    if plan is not None:
+        plan["gpu_admission_snapshots"] = snapshots
     publish_submission(root, records, plan)
     run_controller(root, args.stage, records, allocations)
 

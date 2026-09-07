@@ -10,6 +10,7 @@ from pathlib import Path
 import socket
 from typing import Any
 
+from experiments.keyframe_neighborhood_sampling.gpu_admission import admission_policy
 from experiments.keyframe_neighborhood_sampling.runner_contract import DirectDispatch
 from experiments.keyframe_neighborhood_sampling.runner_contract import canonical_bytes
 from experiments.keyframe_neighborhood_sampling.runner_contract import process_exit_record
@@ -47,6 +48,10 @@ def validate_direct_submission(submission: Mapping[str, Any], *, stage: str) -> 
     profile = submission.get("runtime_profile", {})
     if not isinstance(profile, Mapping) or direct_gpu_layout(profile) != layout:
         raise ArtifactContractError("Direct runtime profile and submission GPU layouts differ")
+    try:
+        admission_policy(profile)
+    except ValueError as exc:
+        raise ArtifactContractError("Invalid direct GPU admission policy") from exc
     if stage == "architecture_smoke":
         allocations = [submission.get("gpu_uuids")]
         width = 1

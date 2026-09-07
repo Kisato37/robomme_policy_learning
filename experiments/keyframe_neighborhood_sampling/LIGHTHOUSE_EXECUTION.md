@@ -47,8 +47,31 @@ Every direct execution records selected-device memory/utilization samples in
 `gpu_telemetry.jsonl`. Report sampled peaks, not exact instantaneous peaks;
 telemetry errors are diagnostic and never scientific outcomes. Single-GPU
 feasibility remains unproven until real checkpoint inference and actual
-front/wrist rendering complete together. A populated GPU is not an available
-device merely because some VRAM is free. No GPU is reserved while waiting.
+front/wrist rendering complete together. By default a populated GPU is not an
+available device merely because some VRAM is free. No GPU is reserved while waiting.
+
+### Explicit sharing with other users' jobs
+
+On 2026-09-07 the user additionally authorized sharing a populated GPU,
+preferentially choosing low existing utilization and ample free memory. Add
+`--allow-shared-gpu --shared-min-free-mib 49152 --shared-max-utilization 80`
+to every live or dry-run direct submission, together with `--gpu-layout colocated`.
+Without the sharing flag, the original strict idle-device rule is unchanged.
+The resource-only admission thresholds are recorded in the hashed runtime
+profile and reconstructed command; they are not model or selector parameters.
+They are checked before submission and again before each execution, both before
+and after acquiring our own advisory lease. Sharing is not supported with the
+preallocating separate-GPU policy mode.
+
+The launch evidence records observed free memory/utilization, and each execution
+adds `gpu_admission.json` plus ongoing GPU telemetry. These readings describe
+the whole shared device, not solely our process. A 48-GiB free-memory admission
+threshold is a conservative starting check, not a reservation or guarantee of
+future capacity; other jobs can grow. No other user's processes, priorities,
+GPU settings, or memory are changed. Our cleanup remains limited to our recorded
+process groups. Admission failures stop new work without an implicit GPU switch
+or retry. Preserve any partial evidence and review recovery. Sharing-induced
+latency is not a clean exclusive-device performance measurement.
 
 Each row uses twelve nonoverlapping allowed CPU IDs. A combined 96-GiB RSS
 guard plus a child-group watchdog limit bounds memory usage operationally.
