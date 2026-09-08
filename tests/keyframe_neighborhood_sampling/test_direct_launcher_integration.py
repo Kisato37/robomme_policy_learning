@@ -345,6 +345,51 @@ def test_resident_controller_covers_1600_once_in_shard_queues(full_plan, monkeyp
 
 
 @pytest.mark.parametrize("full_plan", [True], indirect=True)
+def test_resident_controller_continues_other_queues_after_infrastructure_failure(full_plan, monkeypatch):
+    from experiments.keyframe_neighborhood_sampling import resident_policy
+    calls = []
+    def queue(*args):
+        assert not args[5].is_set()
+        calls.extend(row["row_id"] for row in args[3])
+        if args[3][0]["row_id"] == 0:
+            raise submit_direct.RowInfrastructureError("proved failure, queue finished")
+    monkeypatch.setattr(resident_policy, "run_resident_rows", queue)
+    with pytest.raises(RuntimeError, match="1 audited infrastructure failures"):
+        submit_direct.run_controller(full_plan.root, "formal", full_plan.records, full_plan.records[0][1]["gpu_pairs"])
+    assert calls == list(range(1600))
+
+
+@pytest.mark.parametrize("full_plan", [True], indirect=True)
+@pytest.mark.parametrize("scientific_artifact", [None, "episode_result.json", "selector_trace.jsonl"])
+def test_missing_reset_allowed_only_for_proved_pre_action_failure(full_plan, scientific_artifact):
+    from experiments.keyframe_oracle_sampling.artifacts import RunArtifactStore, ScientificKey
+    manifest, _ = _completed_manifest(full_plan, 1000)
+    row_dir = Path(manifest["runner"]["dispatch_path"]).parent
+    (row_dir / "resident_reset.json").unlink()
+    completion = json.loads((row_dir / "completion.json").read_bytes())
+    completion["resident_policy"]["reset_sha256"] = None
+    (row_dir / "completion.json").write_bytes(canonical_bytes(completion))
+    row = full_plan.matrix["rows"][1000]
+    key = ScientificKey(*(row[k] for k in ("task", "episode_id", "arm", "trajectory_kind")))
+    store = RunArtifactStore(full_plan.root)
+    writer = store.new_attempt(key, 0, {**manifest, "environment_setup_completed": False, "renderer_device": None,
+        "protocol_version": "v1.0", "protocol_family": "keyframe_neighborhood_sampling_v1"})
+    store.record_failure({**key.as_dict(), "attempt_id": 0, "formal_matrix_row_id": 1000,
+        "protocol_version": "v1.0", "protocol_family": "keyframe_neighborhood_sampling_v1",
+        "classification": "hard_stop", "retry_allowed": False, "error_type": "AcceleratorError",
+        "error": "CUDA error: out of memory", "failure_phase": "evaluator_episode",
+        "scientific_actions_started": False, "environment_setup_completed": False, "renderer_device": None,
+        "episode_manifest_sha256": sha256_file(writer.manifest_path),
+        "runner_backend": "direct", "runner": manifest["runner"]})
+    if scientific_artifact:
+        (writer.attempt_dir / scientific_artifact).write_text("{}")
+        with pytest.raises(ArtifactContractError, match="requires a resident reset"):
+            direct_provenance.audit_direct_completion(manifest["runner"], full_plan.root, required_roles={"policy"})
+    else:
+        direct_provenance.audit_direct_completion(manifest["runner"], full_plan.root, required_roles={"policy"})
+
+
+@pytest.mark.parametrize("full_plan", [True], indirect=True)
 @pytest.mark.parametrize("fault", ["missing_reset", "wrong_shard", "missing_session_cleanup"])
 def test_formal_completion_rejects_resident_evidence_faults(full_plan, fault):
     _, authorizations = _authorizations(full_plan)

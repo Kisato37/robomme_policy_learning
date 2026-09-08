@@ -415,11 +415,12 @@ def audit_resident_binding(envelope: Mapping[str, Any], run_root: Path, completi
     binding_path = path.parent / "policy_session.json"
     reset_path = path.parent / "resident_reset.json"
     if completion.get("resident_policy") != {
-        "binding_sha256": sha256_file(binding_path), "reset_sha256": sha256_file(reset_path),
+        "binding_sha256": sha256_file(binding_path),
+        "reset_sha256": sha256_file(reset_path) if reset_path.is_file() else None,
     }:
         raise ArtifactContractError("Resident completion lacks exact binding/reset digests")
     binding = _load_canonical(binding_path)
-    reset = _load_canonical(reset_path)
+    reset = _load_canonical(reset_path) if reset_path.is_file() else None
     if (binding.get("schema") != "resident-policy-binding-v1"
             or binding.get("row_execution_id") != row.execution_id
             or binding.get("row_dispatch_sha256") != envelope["dispatch_sha256"]):
@@ -438,6 +439,32 @@ def audit_resident_binding(envelope: Mapping[str, Any], run_root: Path, completi
         raise ArtifactContractError("Resident session plan does not contain this row uniquely")
     if row.stage == "formal" and plan.get("submission_shard_id") != row.shard_id:
         raise ArtifactContractError("Resident session plan belongs to a different formal shard")
+    if reset is None:
+        # A cleanup receipt can describe a failed pre-reset launch. It can never
+        # stand in for the reset required by a scientific result/selector trace.
+        from experiments.keyframe_oracle_sampling.artifacts import RunArtifactStore  # noqa: PLC0415
+        from experiments.keyframe_oracle_sampling.artifacts import ScientificKey, read_jsonl  # noqa: PLC0415
+        from experiments.keyframe_neighborhood_sampling.record_launcher_failure import validate_extension_failure_record  # noqa: PLC0415
+        expected_row = load_resident_row(row)
+        key = ScientificKey(*(expected_row[k] for k in ("task", "episode_id", "arm", "trajectory_kind")))
+        store = RunArtifactStore(run_root)
+        attempt_path = store.attempt_dir(key, row.attempt_id)
+        if (attempt_path / "episode_result.json").exists() or (attempt_path / "selector_trace.jsonl").exists():
+            raise ArtifactContractError("Scientific execution requires a resident reset receipt")
+        failures = [f for f in read_jsonl(store.failures_path)
+                    if all(f.get(k) == v for k, v in key.as_dict().items())
+                    and f.get("attempt_id") == row.attempt_id]
+        if len(failures) != 1 or failures[0].get("scientific_actions_started") is not False:
+            raise ArtifactContractError("Missing reset is permitted only for one proved pre-action failure")
+        validate_extension_failure_record(run_root, failures[0], expected_row_id=row.row_id,
+                                          require_direct_completion=False)
+        audit_direct_completion(binding["session"], run_root, required_roles={"policy"})
+        started, exited = _validated_role_evidence(session, session_path, "policy")
+        if not (dt.datetime.fromisoformat(started["started_utc"])
+                <= dt.datetime.fromisoformat(completion["finished_utc"])
+                <= dt.datetime.fromisoformat(exited["finished_utc"])):
+            raise ArtifactContractError("Failed row cleanup is outside the resident model lifecycle")
+        return
     if (reset.get("schema") != "resident-reset-v1" or reset.get("row_execution_id") != row.execution_id
             or reset.get("session_execution_id") != session.execution_id
             or reset.get("binding_sha256") != sha256_file(binding_path) or reset.get("state") != RESET_STATE

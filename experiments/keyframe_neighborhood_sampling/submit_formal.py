@@ -189,6 +189,8 @@ def _validate_retry_rows(
         raise ValueError(f"Retry row must be inside 0..{len(rows) - 1}")
 
     store = RunArtifactStore(run_root)
+    from experiments.keyframe_neighborhood_sampling.recovery import validate_retry_budget  # noqa: PLC0415
+    validate_retry_budget(run_root, selected_rows, attempt_id)
     completed = store.scan_completed_keys()
     failures = read_jsonl(store.failures_path) if store.failures_path.exists() else []
     for row_id in selected_rows:
@@ -269,8 +271,9 @@ def build_submission(
             store.scan_completed_keys() or store.failures_path.exists() or (run_root / "trajectories").exists()
         ):
             raise RuntimeError("Initial extension formal submission requires an unused prepared run root")
-        selected_rows = list(range(len(rows)))
-        if len(selected_rows) != FORMAL_TRAJECTORY_COUNT:
+        from experiments.keyframe_neighborhood_sampling.recovery import initial_rows  # noqa: PLC0415
+        selected_rows = initial_rows(run_root, verify_parent=True)
+        if len(rows) != FORMAL_TRAJECTORY_COUNT:
             raise AssertionError("Extension formal matrix is not exactly 1,600 rows")
     else:
         selected_rows = _validate_retry_rows(run_root, rows, attempt_id=attempt_id, row_ids=row_ids)
@@ -281,6 +284,8 @@ def build_submission(
         selected_rows, max_concurrent=max_concurrent, sequential=sequential
     )
     scheduling = {"shard_scheduling": "sequential"} if sequential else {}
+    recovery_path = run_root / "protocol/recovery_plan.json"
+    recovery_binding = {"recovery_plan_sha256": sha256_file(recovery_path)} if recovery_path.exists() else {}
     submissions: list[tuple[list[str], dict]] = []
     shard_count = len(row_shards)
     for shard_id, shard_row_ids in enumerate(row_shards):
@@ -302,6 +307,7 @@ def build_submission(
             str(shard_id),
         ]
         record = {
+            **recovery_binding,
             **scheduling,
             "schema_version": 1,
             "protocol_version": manifest["protocol_version"],
@@ -331,6 +337,7 @@ def build_submission(
         submissions.append((command, record))
 
     plan = {
+        **recovery_binding,
         **scheduling,
         "schema_version": 1,
         "protocol_version": manifest["protocol_version"],

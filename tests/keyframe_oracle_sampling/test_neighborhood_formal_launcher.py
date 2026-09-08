@@ -38,6 +38,19 @@ def test_extension_formal_dry_run_is_exact_and_non_submitting():
     assert report["creates_run_root"] is False
 
 
+def test_recovery_submission_uses_bound_complement_without_relabeling_matrix(tmp_path, monkeypatch):
+    from experiments.keyframe_neighborhood_sampling import recovery
+    root = _stub_prepared_root(tmp_path, monkeypatch)
+    (root / "protocol/recovery_plan.json").write_text('{"fixture":"already strictly audited parent"}')
+    missing = [1352, 1354, 1447, 1599]
+    monkeypatch.setattr(recovery, "initial_rows", lambda root, **kw: missing)
+    submissions, plan = build_submission(root, max_concurrent=2, attempt_id=0, row_ids=None)
+    assert plan["trajectory_count"] == 4
+    assert [r for shard in plan["shards"] for r in shard["row_ids"]] == missing
+    assert len(json.loads((root / "protocol/formal_matrix.json").read_text())["rows"]) == 1600
+    assert all(record["recovery_plan_sha256"] == plan["recovery_plan_sha256"] for _, record in submissions)
+
+
 def test_extension_formal_rows_shard_without_exceeding_global_concurrency():
     shards, per_shard_concurrent = shard_rows(list(range(FORMAL_TRAJECTORY_COUNT)), max_concurrent=4)
     assert MAX_ROWS_PER_ARRAY == 1000

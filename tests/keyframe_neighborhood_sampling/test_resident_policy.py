@@ -143,7 +143,8 @@ def test_controller_uses_one_resident_queue_for_all_48(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("stage", ["development_smoke", "formal"])
-def test_resident_rows_acquire_once_load_once_and_cleanup_once(monkeypatch, tmp_path, stage):
+@pytest.mark.parametrize("failed_row_offset", [None, 0, 10])
+def test_resident_rows_acquire_once_load_once_and_cleanup_once(monkeypatch, tmp_path, stage, failed_row_offset):
     rows = build_smoke_matrix()["rows"] if stage == "development_smoke" else build_formal_matrix()["rows"][1000:1600]
     counts = {"admission": 0, "lease": 0, "load": 0, "cleanup": 0}
     class Context:
@@ -180,7 +181,11 @@ def test_resident_rows_acquire_once_load_once_and_cleanup_once(monkeypatch, tmp_
     monkeypatch.setattr(runner, "check_gpu_admission", admission)
     monkeypatch.setattr(runner, "readiness", lambda _: None)
     visited = []
-    monkeypatch.setattr(runner, "execute_one", lambda *a, **k: visited.append((a[3]["row_id"], k["resident"])))
+    def execute(*a, **k):
+        visited.append((a[3]["row_id"], k["resident"]))
+        if failed_row_offset is not None and a[3]["row_id"] == rows[failed_row_offset]["row_id"]:
+            raise runner.RowInfrastructureError("fixture proved infrastructure failure")
+    monkeypatch.setattr(runner, "execute_one", execute)
     root = tmp_path / "runs/keyframe_neighborhood_sampling/batch"
     root.mkdir(parents=True)
     path = root / "submission.json"
@@ -193,7 +198,13 @@ def test_resident_rows_acquire_once_load_once_and_cleanup_once(monkeypatch, tmp_
     def read_text(path, *a, **k):
         return "55555555-5555-4555-8555-555555555555" if str(path) == "/proc/sys/kernel/random/boot_id" else real_read(path, *a, **k)
     monkeypatch.setattr(type(root), "read_text", read_text)
-    resident.run_resident_rows(root, stage, path, rows, (GPU, GPU), threading.Event())
+    stop = threading.Event()
+    if failed_row_offset is None:
+        resident.run_resident_rows(root, stage, path, rows, (GPU, GPU), stop)
+    else:
+        with pytest.raises(runner.RowInfrastructureError, match="recorded failures"):
+            resident.run_resident_rows(root, stage, path, rows, (GPU, GPU), stop)
+        assert not stop.is_set()
     assert counts == {"admission": 2, "lease": 1, "load": 1, "cleanup": 1}
     assert [row for row, _ in visited] == [row["row_id"] for row in rows]
     assert len({id(session) for _, session in visited}) == 1

@@ -588,8 +588,17 @@ def validate_prepared_formal_root(
         raise ArtifactContractError("Extension formal plan assigns a row more than once")
     if int(plan.get("trajectory_count", -1)) != len(all_rows):
         raise ArtifactContractError("Extension formal plan trajectory count mismatch")
-    if attempt_id == 0 and sorted(all_rows) != list(range(FORMAL_TRAJECTORY_COUNT)):
-        raise ArtifactContractError("Initial extension formal plan is not the exact 1,600-row matrix")
+    from experiments.keyframe_neighborhood_sampling.recovery import initial_rows, validate_retry_budget  # noqa: PLC0415
+    if attempt_id == 0 and sorted(all_rows) != initial_rows(run_root):
+        raise ArtifactContractError("Initial extension plan is not the exact full/recovery row set")
+    recovery_path = run_root / "protocol/recovery_plan.json"
+    if recovery_path.exists():
+        recovery_sha = sha256_file(recovery_path)
+        if any(p.get("recovery_plan_sha256") != recovery_sha for p in (plan, submission)):
+            raise ArtifactContractError("Formal submission recovery-plan binding differs")
+        validate_retry_budget(run_root, all_rows, attempt_id)
+    elif any("recovery_plan_sha256" in p for p in (plan, submission)):
+        raise ArtifactContractError("Submission references a missing recovery plan")
 
     if require_runtime_backend(submission) == "direct":
         envelope = direct_runner_for_runtime(run_root)

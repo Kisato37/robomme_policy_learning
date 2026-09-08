@@ -67,7 +67,7 @@ class RowInfrastructureError(RuntimeError):
     """An audited infrastructure failure, not a result and not permission to retry."""
 
 
-def require_row_outcome(run_root: Path, row: dict, attempt_id: int) -> None:
+def require_row_outcome(run_root: Path, row: dict, attempt_id: int, *, resident_active: bool = False) -> None:
     from experiments.keyframe_neighborhood_sampling.record_launcher_failure import validate_extension_failure_record
     from experiments.keyframe_oracle_sampling.artifacts import EpisodeAttemptWriter
     from experiments.keyframe_oracle_sampling.artifacts import RunArtifactStore
@@ -88,7 +88,11 @@ def require_row_outcome(run_root: Path, row: dict, attempt_id: int) -> None:
     ]
     if len(matches) != 1:
         raise RuntimeError(f"Row {row['row_id']} has neither a complete result nor one exact recorded failure")
-    validate_extension_failure_record(run_root, matches[0], expected_row_id=row["row_id"])
+    # The resident session's final exit receipt exists only after its queue
+    # finishes. Reconciliation already checked row identity/process exits;
+    # full lifecycle validation remains mandatory before retry/aggregation.
+    validate_extension_failure_record(run_root, matches[0], expected_row_id=row["row_id"],
+                                      require_direct_completion=not resident_active)
     if matches[0]["classification"] == "infrastructure":
         raise RowInfrastructureError(f"Row {row['row_id']}: {matches[0]['error_type']}")
     raise RuntimeError(f"Row {row['row_id']} is a recorded hard stop: {matches[0]['error_type']}")
@@ -615,7 +619,10 @@ class Execution:
         if self.resident is not None:
             resident_links = {"resident_policy": {
                 "binding_sha256": sha256_file(self.directory / "policy_session.json"),
-                "reset_sha256": sha256_file(self.directory / "resident_reset.json"),
+                # Simulator setup/readiness may fail before the first reset.
+                # Missing reset is failure evidence, never a synthetic receipt.
+                "reset_sha256": (sha256_file(self.directory / "resident_reset.json")
+                                 if (self.directory / "resident_reset.json").is_file() else None),
             }}
         write_once_record(
             self.directory / "completion.json",
@@ -845,9 +852,9 @@ def execute_one(
                 execution.start("reconcile", commands["reconcile"] + failure_args)
                 status = execution.wait("reconcile", reconciliation=True)
                 execution.complete()
-                if status != 0:
+                if status not in {0, 80}:
                     raise RuntimeError(f"Result reconciliation failed with exit status {status}")
-                require_row_outcome(run_root, row, attempt)
+                require_row_outcome(run_root, row, attempt, resident_active=resident is not None)
                 if evaluator_status != 0:
                     write_once_record(
                         directory / "post_result_exit_warning.json",
@@ -920,6 +927,9 @@ def run_controller(run_root: Path, stage: str, records: list[tuple[Path, dict]],
                     try:
                         run_resident_rows(run_root, stage, path, [rows[i] for i in buckets[slot]],
                                           tuple(allocations[slot]), stop)
+                    except RowInfrastructureError as exc:
+                        with failures_lock:
+                            infrastructure_failures.append(str(exc))
                     except BaseException:
                         stop.set()
                         raise

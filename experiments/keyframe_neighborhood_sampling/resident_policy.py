@@ -149,10 +149,20 @@ def run_resident_rows(run_root: Path, stage: str, submission_path: Path, rows: l
                 if readiness is not None:
                     raise RuntimeError(f"Resident policy startup failed: {readiness}")
                 resident = ResidentSession(execution, lease)
+                failures = []
                 for row in rows:
                     if stop.is_set():
                         raise InterruptedError("Resident batch stopped; remaining rows were not dispatched")
-                    runner.execute_one(run_root, stage, submission_path, row, gpu_uuids, stop, resident=resident)
+                    try:
+                        runner.execute_one(run_root, stage, submission_path, row, gpu_uuids, stop, resident=resident)
+                    except runner.RowInfrastructureError as error:
+                        # Keep the model resident; never retry this row implicitly.
+                        failures.append({"row_id": row["row_id"], "error": str(error)})
+                if failures:
+                    write_once_record(directory / "infrastructure_failures.json", {"rows": failures})
+                    raise runner.RowInfrastructureError(f"Resident queue has {len(failures)} recorded failures")
+            except runner.RowInfrastructureError:
+                raise
             except BaseException as error:
                 write_once_record(directory / "controller_error.json", {
                     "error_type": type(error).__name__, "error": str(error), "recorded_utc": utc_now(),
