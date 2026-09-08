@@ -21,6 +21,7 @@ from experiments.keyframe_neighborhood_sampling import direct_provenance
 from experiments.keyframe_neighborhood_sampling import submit_direct
 from experiments.keyframe_neighborhood_sampling.formal_matrix import build_formal_matrix
 from experiments.keyframe_neighborhood_sampling.formal_matrix import validate_formal_runtime_row_binding
+from experiments.keyframe_neighborhood_sampling.resident_policy import RESET_STATE
 from experiments.keyframe_neighborhood_sampling.runner_contract import DirectDispatch
 from experiments.keyframe_neighborhood_sampling.runner_contract import canonical_bytes
 from experiments.keyframe_neighborhood_sampling.runner_contract import process_exit_record
@@ -44,7 +45,10 @@ class FullPlan:
 
 
 @pytest.fixture
-def full_plan(tmp_path):
+def full_plan(tmp_path, request):
+    resident = getattr(request, "param", False)
+    pairs = [[pair[0], pair[0]] for pair in GPU_PAIRS] if resident else GPU_PAIRS
+    layout = {"gpu_layout": "colocated"} if resident else {}
     root = tmp_path / "runs/keyframe_neighborhood_sampling/direct-integration"
     protocol = root / "protocol"
     protocol.mkdir(parents=True)
@@ -54,12 +58,14 @@ def full_plan(tmp_path):
         "environment_sh": "/fixture/environment.sh", "environment_sh_sha256": "e" * 64,
         "graphics_wrapper": "/fixture/graphics.sh", "graphics_wrapper_sha256": "f" * 64,
         "lock_directory": "/fixture/stable-gpu-locks",
+        **layout, **({"policy_lifetime": "resident"} if resident else {}),
     }
     identity = {
         "schema_version": 1, "protocol_version": "v1.0",
         "protocol_family": "keyframe_neighborhood_sampling_v1",
         "runner_backend": "direct", "repository_commit_sha": "a" * 40,
         "run_root": str(root), "formal_launch_authorized": True,
+        **layout,
     }
     launch = {
         **identity, "repository": {"commit_sha": "a" * 40},
@@ -85,7 +91,7 @@ def full_plan(tmp_path):
         record = {
             **identity, **shard, "direct_run_id": str(uuid.uuid4()),
             "attempt_id": 0, "trajectory_count": len(rows), "max_concurrent": 1,
-            "global_max_concurrent": 2, "gpu_pairs": GPU_PAIRS, "runtime_profile": profile,
+            "global_max_concurrent": 2, "gpu_pairs": pairs, "runtime_profile": profile,
             "launch_manifest_sha256": sha256_file(protocol / "launch_manifest.json"),
             **{key: value for key, value in launch.items() if key.startswith(("checkpoint_", "formal_matrix_", "architecture_report_", "development_smoke_audit_"))},
         }
@@ -93,7 +99,7 @@ def full_plan(tmp_path):
     plan = {
         **identity, "direct_run_id": str(uuid.uuid4()), "attempt_id": 0,
         "trajectory_count": 1600, "shard_count": 2, "max_rows_per_array": 1000,
-        "global_max_concurrent": 2, "gpu_pairs": GPU_PAIRS, "runtime_profile": profile,
+        "global_max_concurrent": 2, "gpu_pairs": pairs, "runtime_profile": profile,
         "shards": shards,
     }
     # Exercise the real publication boundary: plan first, then exact record
@@ -115,8 +121,9 @@ def _completed_manifest(bundle, row_id):
         execution_id=str(uuid.uuid4()), run_root=str(bundle.root), repository_commit_sha="a" * 40,
         stage="formal", launch_manifest_sha256=submission["launch_manifest_sha256"],
         submission_plan_sha256=sha256_file(path), matrix_sha256=bundle.launch["formal_matrix_sha256"],
-        attempt_id=0, row_id=row_id, shard_id=shard_id, gpu_uuids=tuple(GPU_PAIRS[shard_id]),
+        attempt_id=0, row_id=row_id, shard_id=shard_id, gpu_uuids=tuple(submission["gpu_pairs"][shard_id]),
         host_name="synthetic-integration-host", host_boot_id=BOOT_ID, policy_port=30000 + row_id,
+        gpu_layout=submission.get("gpu_layout", "separate"),
     )
     dispatch_path = direct_provenance.dispatch_path(bundle.root, stage="formal", attempt_id=0, row_id=row_id)
     dispatch_path.parent.mkdir(parents=True)
@@ -125,6 +132,36 @@ def _completed_manifest(bundle, row_id):
         "backend": "direct", "dispatch_path": str(dispatch_path),
         "dispatch_sha256": dispatch_hash, "dispatch": dispatch.as_record(),
     }
+    resident = submission["runtime_profile"].get("policy_lifetime") == "resident"
+    resident_links = {}
+    if resident:
+        session = dataclasses.replace(dispatch, execution_id=str(uuid.uuid4()), stage="policy_session",
+                                      row_id=None, shard_id=None, policy_port=29999)
+        session_path = direct_provenance.dispatch_path(bundle.root, stage="policy_session", attempt_id=0,
+                                                       row_id=None, execution_id=session.execution_id)
+        session_path.parent.mkdir(parents=True)
+        session_hash = write_once_record(session_path, session.as_record())
+        model_start_hash = write_once_record(session_path.parent / "policy_start.json", process_start_record(
+            session, process_identity={"boot_id": BOOT_ID, "pid": 800, "parent_pid": os.getpid(),
+                                      "process_group": 800, "session": 800, "start_ticks": 1, "uid": os.getuid()},
+            command=["/fixture/python", "real-resident-model"], working_directory="/fixture"))
+        binding_hash = write_once_record(dispatch_path.parent / "policy_session.json", {
+            "schema": "resident-policy-binding-v1", "row_execution_id": dispatch.execution_id,
+            "row_dispatch_sha256": dispatch_hash, "policy_start_sha256": model_start_hash,
+            "session": {"backend": "direct", "dispatch_path": str(session_path),
+                        "dispatch_sha256": session_hash, "dispatch": session.as_record()},
+        })
+        write_once_record(session_path.parent / "row_plan.json", {
+            "stage": "formal", "submission_shard_id": shard_id, "row_ids": submission["row_ids"],
+        })
+        reset_hash = write_once_record(dispatch_path.parent / "resident_reset.json", {
+            "schema": "resident-reset-v1", "row_execution_id": dispatch.execution_id,
+            "session_execution_id": session.execution_id, "binding_sha256": binding_hash,
+            "state": dict(RESET_STATE), "model_process_pid": 801,
+            "selector_config": {key: bundle.matrix["rows"][row_id][key] for key in ("task", "episode_id", "arm")},
+            "recorded_utc": utc_now(),
+        })
+        resident_links = {"resident_policy": {"binding_sha256": binding_hash, "reset_sha256": reset_hash}}
     links = {}
     for index, role in enumerate(("preflight", "policy", "evaluator", "reconcile")):
         pid = 900 + index
@@ -147,7 +184,16 @@ def _completed_manifest(bundle, row_id):
         "backend": "direct", "execution_id": dispatch.execution_id,
         "dispatch_sha256": dispatch_hash, "cleanup_confirmed": True, "roles": links,
         "finished_utc": utc_now(),
+        **resident_links,
     })
+    if resident:
+        exit_hash = write_once_record(session_path.parent / "policy_exit.json", process_exit_record(
+            session, started_record_sha256=model_start_hash, returncode=-15, wall_clock_limit_reached=False))
+        write_once_record(session_path.parent / "completion.json", {
+            "backend": "direct", "execution_id": session.execution_id, "dispatch_sha256": session_hash,
+            "cleanup_confirmed": True, "roles": {"policy": {"start_sha256": model_start_hash, "exit_sha256": exit_hash}},
+            "finished_utc": utc_now(),
+        })
     manifest = {
         "runner_backend": "direct", "runner": runner, "environment_setup_completed": True,
         "renderer_device": {
@@ -174,6 +220,7 @@ def test_full_1600_direct_plan_and_both_shards_pass_production_authorization_aud
         assert "slurm_array_job_id" not in authorization
 
 
+@pytest.mark.parametrize("full_plan", [False, True], indirect=True)
 @pytest.mark.parametrize("row_id", [0, 999, 1000, 1599])
 def test_both_shard_boundaries_bind_real_runtime_then_offline_completion(full_plan, monkeypatch, row_id):
     _, authorizations = _authorizations(full_plan)
@@ -284,3 +331,36 @@ def test_controller_preserves_other_rows_after_audited_infrastructure_failure_wi
     # counted once, never silently retried, and the batch still exits nonzero.
     assert calls == list(range(1600))
     assert calls.count(3) == 1
+
+
+@pytest.mark.parametrize("full_plan", [True], indirect=True)
+def test_resident_controller_covers_1600_once_in_shard_queues(full_plan, monkeypatch):
+    from experiments.keyframe_neighborhood_sampling import resident_policy  # noqa: PLC0415
+    calls = []
+    monkeypatch.setattr(resident_policy, "run_resident_rows", lambda *args: calls.append(args))
+    submit_direct.run_controller(full_plan.root, "formal", full_plan.records, full_plan.records[0][1]["gpu_pairs"])
+    assert [len(args[3]) for args in calls] == [1000, 600]
+    assert [row["row_id"] for args in calls for row in args[3]] == list(range(1600))
+    assert [args[2] for args in calls] == [path for path, _ in full_plan.records]
+
+
+@pytest.mark.parametrize("full_plan", [True], indirect=True)
+@pytest.mark.parametrize("fault", ["missing_reset", "wrong_shard", "missing_session_cleanup"])
+def test_formal_completion_rejects_resident_evidence_faults(full_plan, fault):
+    _, authorizations = _authorizations(full_plan)
+    manifest, _ = _completed_manifest(full_plan, 1000)
+    row_dir = Path(manifest["runner"]["dispatch_path"]).parent
+    binding = json.loads((row_dir / "policy_session.json").read_bytes())
+    session_dir = Path(binding["session"]["dispatch_path"]).parent
+    if fault == "missing_reset":
+        (row_dir / "resident_reset.json").unlink()
+    elif fault == "missing_session_cleanup":
+        (session_dir / "completion.json").unlink()
+    else:
+        path = session_dir / "row_plan.json"
+        payload = json.loads(path.read_bytes())
+        payload["submission_shard_id"] = 0
+        path.write_bytes(canonical_bytes(payload))
+    with pytest.raises((ArtifactContractError, OSError)):
+        aggregate_formal._validate_attempt_submission_binding(
+            manifest, row_id=1000, authorization=authorizations[1000], run_root=full_plan.root)

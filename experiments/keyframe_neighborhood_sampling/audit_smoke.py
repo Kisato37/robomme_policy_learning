@@ -270,6 +270,7 @@ def build_smoke_audit(run_root: Path) -> dict[str, Any]:
         for arm in EXTENSION_ARMS
     }
     retry_submissions: dict[int, dict[str, Any]] = {}
+    policy_lifetimes: set[str] = set()
     used_failures: set[int] = set()
     for key, result_path in sorted(completed.items()):
         if key not in expected_rows:
@@ -323,6 +324,7 @@ def build_smoke_audit(run_root: Path) -> dict[str, Any]:
         if runner_backend(episode_manifest) != runner_backend(submission):
             raise ArtifactContractError("Smoke attempt and submission runner backends differ")
         if runner_backend(submission) == "direct":
+            policy_lifetimes.add(submission.get("runtime_profile", {}).get("policy_lifetime", "per_row"))
             if episode_manifest.get("environment_setup_completed") is not True:
                 raise ArtifactContractError("Completed direct smoke result lacks confirmed simulator setup")
             validate_direct_attempt(
@@ -370,7 +372,8 @@ def build_smoke_audit(run_root: Path) -> dict[str, Any]:
     )
     return {
         "schema_version": 1,
-        **({"runner_backend": "direct"} if runner_backend(launch) == "direct" else {}),
+        **({"runner_backend": "direct", "policy_lifetimes": sorted(policy_lifetimes)}
+           if runner_backend(launch) == "direct" else {}),
         "protocol_version": PROTOCOL_VERSION,
         "protocol_family": EXTENSION_PROTOCOL_FAMILY,
         "audited_utc": utc_now(),

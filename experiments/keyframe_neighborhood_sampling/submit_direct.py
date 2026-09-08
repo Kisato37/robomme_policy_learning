@@ -52,6 +52,17 @@ CPUS_PER_ROW = 12
 MEMORY_BYTES_PER_ROW = 96 * 1024**3
 
 
+def resident_session_seconds(row_count: int) -> int:
+    """Queue budget, not a relaxed trajectory timeout: each row still has 12 h.
+
+    A model serving many rows must not inherit a single row's deadline. Bound
+    it by the sum of the unchanged row, reconciliation and cleanup allowances.
+    """
+    if type(row_count) is not int or not 1 <= row_count <= 1000:
+        raise ValueError("Resident queue must contain 1..1000 submitted rows")
+    return READINESS_SECONDS + row_count * (ROW_SECONDS + 120 + 40)
+
+
 class RowInfrastructureError(RuntimeError):
     """An audited infrastructure failure, not a result and not permission to retry."""
 
@@ -263,7 +274,9 @@ def build_direct_submission(
     admission = admission_policy(profile)
     if profile.get("policy_lifetime") == "resident":
         if stage == "formal":
-            raise ValueError("Resident formal runs require a separately reviewed execution gate")
+            from experiments.keyframe_neighborhood_sampling.resident_policy import require_resident_smoke
+
+            require_resident_smoke(run_root)
         command.append("--resident-policy")
     if admission["mode"] == "shared":
         command.extend([
@@ -378,7 +391,8 @@ class Execution:
     """Own only the real children started for one immutable row dispatch."""
 
     def __init__(
-        self, dispatch: DirectDispatch, directory: Path, profile: dict, lease: GpuLease, stop: threading.Event
+        self, dispatch: DirectDispatch, directory: Path, profile: dict, lease: GpuLease, stop: threading.Event,
+        *, session_row_count: int | None = None,
     ):
         self.dispatch, self.directory, self.profile, self.lease, self.stop = dispatch, directory, profile, lease, stop
         self.path = directory / "dispatch.json"
@@ -388,9 +402,14 @@ class Execution:
         self.timed_out = False
         self.last_memory_check = 0.0
         self.resident = None
-        self.deadline = time.monotonic() + (
+        duration = (
             ARCHITECTURE_SECONDS if dispatch.stage == "architecture_smoke" else ROW_SECONDS
         )
+        if dispatch.stage == "policy_session":
+            duration = resident_session_seconds(session_row_count)
+        elif session_row_count is not None:
+            raise ValueError("Only a resident model may have an aggregate queue deadline")
+        self.deadline = time.monotonic() + duration
 
     def start(self, role: str, command: list[str], extra_fds: tuple[int, ...] = ()) -> OwnedProcessGroup:
         if role != "reconcile" and (self.stop.is_set() or time.monotonic() >= self.deadline):
@@ -894,6 +913,8 @@ def run_controller(run_root: Path, stage: str, records: list[tuple[Path, dict]],
             buckets = [record["row_ids"][slot::capacity] for slot in range(capacity)]
 
             def worker(slot: int, buckets=buckets, path=path, record=record) -> None:
+                if not buckets[slot]:
+                    return  # A small explicit retry must not start an empty resident model.
                 if record.get("runtime_profile", {}).get("policy_lifetime") == "resident":
                     from experiments.keyframe_neighborhood_sampling.resident_policy import run_resident_rows
                     try:
@@ -934,7 +955,7 @@ def main() -> None:
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--stage", choices=("architecture_smoke", "development_smoke", "formal"), required=True)
     parser.add_argument("--gpu-layout", choices=("separate", "colocated"), default="separate")
-    parser.add_argument("--resident-policy", action="store_true", help="Load once per smoke slot; reset each episode")
+    parser.add_argument("--resident-policy", action="store_true", help="Load once per shard/slot; reset each episode")
     parser.add_argument("--allow-shared-gpu", action="store_true", help="Explicitly authorized sharing only; requires colocated layout")
     parser.add_argument("--shared-min-free-mib", type=int, default=49152)
     parser.add_argument("--shared-max-utilization", type=int, default=80)

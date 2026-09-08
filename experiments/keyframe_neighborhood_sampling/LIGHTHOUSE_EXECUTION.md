@@ -77,7 +77,7 @@ latency is not a clean exclusive-device performance measurement.
 
 Experimental validity and useful throughput take priority over releasing a GPU
 between trajectories. With `--resident-policy`, load the real checkpoint once
-per sequential development slot, retain weights and compiled functions throughout
+per sequential shard/slot, retain weights and compiled functions throughout
 the batch, and release them only when the batch ends or an actual error/stop
 requires cleanup. Start-of-batch shared admission still selects sufficient free
 memory and preferably low load. Do not repeat the admission test between rows:
@@ -111,14 +111,42 @@ means the row-owned simulator/proxy processes are gone, not that shared weights
 were unloaded. A resident model crash stops the batch; it is not silently
 reloaded or used to rerun a scientifically valid outcome.
 
-This implementation is initially smoke-only; formal launch remains separately
-authorized after reviewing its gate. Architecture smoke additionally revisits
+Formal resident execution additionally requires a same-commit architecture
+cross-arm reset PASS and an audited 48-row development matrix whose
+`policy_lifetimes` is exactly `["resident"]`. A per-row or mixed-lifecycle smoke
+cannot authorize a resident formal batch. Architecture smoke additionally revisits
 case A after all other arm/shape cases and requires identical action/memory
 digests without recompilation. The complete 48-row development matrix then
 checks all task-specific resets with the persistent server. Preserve the prior
 3-row partial run unchanged; use a fresh verification root rather than merging
 old per-row-process evidence into a resident-backend PASS. These are development
 revalidation runs, never additional formal samples or outcome-selected retries.
+
+On 2026-09-07 the user explicitly authorized completion of the formal resident
+adapter, final-version acceptance, push to `lab`, and launch of all 1,600 formal
+OC3/OC5 rows **after** acceptance passes. This authorization does not relax any
+scientific or evidence gate. Earlier smoke PASS reports remain immutable; the
+final candidate must produce its own same-commit PASS before formal preparation.
+
+The formal controller retains the original consecutive 1,000/600-row shard
+plan. Each GPU slot loads one model per shard, not one per trajectory. The user
+also explicitly permits paired arms to run on different cards; no same-GPU
+pairing constraint is imposed. Preserve the controller's deterministic row
+distribution across slots and record each trajectory's physical GPU UUID.
+Session bindings name the exact shard submission digest; resets use the global row ID
+in `formal_matrix.json`, never the smoke matrix or a shard-local row number.
+The final formal audit verifies every row's reset receipt and the real resident
+process's final cleanup, in addition to the simulator/proxy lifecycle.
+
+The 12-hour deadline still applies separately to each trajectory. The shared
+model's watchdog instead covers its queue: 240 seconds for readiness plus, for
+each queued row, the unchanged 12-hour row limit, 120-second reconciliation
+allowance and 40-second cleanup allowance. This sum is a bounded infrastructure
+lifetime, not a longer trajectory timeout or permission to stay idle; the
+model exits immediately when its queue completes or a hard error stops it.
+Unknown failures still stop the batch and require evidence review. Run the
+foreground controller inside a named `tmux` session so disconnecting the SSH
+client does not terminate an otherwise healthy authorized batch.
 
 Each row uses twelve nonoverlapping allowed CPU IDs. A combined 96-GiB RSS
 guard plus a child-group watchdog limit bounds memory usage operationally.

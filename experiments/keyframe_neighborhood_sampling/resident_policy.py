@@ -31,6 +31,34 @@ RESET_STATE = {
 }
 
 
+def load_resident_row(dispatch: DirectDispatch) -> dict:
+    """Use the exact stage matrix, never a shard-local index or a smoke fallback."""
+    from experiments.keyframe_neighborhood_sampling.formal_matrix import load_formal_matrix
+    from experiments.keyframe_neighborhood_sampling.smoke_matrix import load_smoke_matrix
+
+    if dispatch.stage not in {"development_smoke", "formal"}:
+        raise ValueError("Resident reset requires a trajectory dispatch")
+    formal = dispatch.stage == "formal"
+    path = Path(dispatch.run_root) / "protocol" / ("formal_matrix.json" if formal else "smoke_matrix.json")
+    if sha256_file(path) != dispatch.matrix_sha256:
+        raise ValueError("Resident trajectory matrix digest differs from its dispatch")
+    rows = (load_formal_matrix(path) if formal else load_smoke_matrix(path))["rows"]
+    if type(dispatch.row_id) is not int or not 0 <= dispatch.row_id < len(rows):
+        raise ValueError("Resident row is outside its stage matrix")
+    return rows[dispatch.row_id]
+
+
+def require_resident_smoke(run_root: Path) -> None:
+    """Additional lifecycle gate; existing formal gates verify all evidence hashes."""
+    protocol = run_root / "protocol"
+    architecture = json.loads((protocol / "architecture_pass_report.json").read_bytes())
+    development = json.loads((protocol / "development_smoke_audit.json").read_bytes())
+    if architecture.get("resident_cross_arm_reset", {}).get("passed") is not True:
+        raise ValueError("Resident formal launch requires a passed same-process cross-arm reset gate")
+    if development.get("policy_lifetimes") != ["resident"] or development.get("passed") is not True:
+        raise ValueError("Resident formal launch requires all 48 development rows audited as resident")
+
+
 def validate_reset_request(obs: dict, row: dict) -> None:
     config = obs.get("keyframe_selector_config")
     if obs.get("reset") is not True or not isinstance(config, dict):
@@ -76,8 +104,13 @@ def run_resident_rows(run_root: Path, stage: str, submission_path: Path, rows: l
 
     record = json.loads(submission_path.read_text())
     profile = record["runtime_profile"]
-    if stage != "development_smoke":
-        raise ValueError("Resident backend is smoke-only until its validation is reviewed")
+    if stage not in {"development_smoke", "formal"}:
+        raise ValueError("Resident batch requires an explicit trajectory stage")
+    if not rows or len({r["row_id"] for r in rows}) != len(rows):
+        raise ValueError("Resident batch must contain unique authorized rows")
+    if any(r["row_id"] not in record["row_ids"] for r in rows):
+        raise ValueError("Resident queue contains an unsubmitted row")
+    matrix_key = "formal_matrix_sha256" if stage == "formal" else "smoke_matrix_sha256"
     physical = tuple(dict.fromkeys(gpu_uuids))
     runner.check_gpu_admission(physical, profile)
     with runner.GpuLease(Path(profile["lock_directory"]), physical) as lease, runner.PortReservation() as port:
@@ -89,14 +122,19 @@ def run_resident_rows(run_root: Path, stage: str, submission_path: Path, rows: l
             execution_id=session_id, run_root=str(run_root),
             repository_commit_sha=record["repository_commit_sha"], stage="policy_session",
             launch_manifest_sha256=record["launch_manifest_sha256"],
-            submission_plan_sha256=sha256_file(submission_path), matrix_sha256=record["smoke_matrix_sha256"],
+            submission_plan_sha256=sha256_file(submission_path), matrix_sha256=record[matrix_key],
             attempt_id=record["attempt_id"], row_id=None, shard_id=None, gpu_uuids=gpu_uuids,
             host_name=socket.gethostname(), host_boot_id=Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
             policy_port=port.port, gpu_layout="colocated",
         )
-        execution = runner.Execution(dispatch, directory, profile, lease, stop)
+        execution = runner.Execution(dispatch, directory, profile, lease, stop, session_row_count=len(rows))
         write_once_record(directory / "gpu_admission.json", admission)
-        write_once_record(directory / "row_plan.json", {"stage": stage, "row_ids": [r["row_id"] for r in rows]})
+        write_once_record(directory / "row_plan.json", {
+            "stage": stage, "row_ids": [r["row_id"] for r in rows],
+            "submission_shard_id": record.get("shard_id"),
+            "session_deadline_seconds": runner.resident_session_seconds(len(rows)),
+            "trajectory_deadline_seconds": runner.ROW_SECONDS,
+        })
         command = [
             str(runner.REPO / ".venv/bin/python"), "scripts/serve_policy.py", "--seed=7",
             f"--port={port.port}", f"--listen-fd={port.pass_fds[0]}",
@@ -140,8 +178,12 @@ async def serve_proxy(args) -> None:
     if binding["row_execution_id"] != dispatch.execution_id or binding["row_dispatch_sha256"] != sha256_file(directory / "dispatch.json"):
         raise ValueError("Resident binding does not name this row dispatch")
     session, _ = _load_runner(binding["session"], Path(dispatch.run_root))
-    matrix = json.loads((Path(dispatch.run_root) / "protocol/smoke_matrix.json").read_bytes())
-    row = matrix["rows"][dispatch.row_id]
+    if session.stage != "policy_session" or any(getattr(session, field) != getattr(dispatch, field) for field in (
+        "run_root", "repository_commit_sha", "launch_manifest_sha256", "submission_plan_sha256",
+        "matrix_sha256", "attempt_id", "gpu_uuids", "gpu_layout", "host_name", "host_boot_id",
+    )):
+        raise ValueError("Resident upstream does not belong to this row's submitted session")
+    row = load_resident_row(dispatch)
     expected_session = {"execution_id": session.execution_id, "dispatch_sha256": binding["session"]["dispatch_sha256"]}
     metadata = {"direct_execution": {"execution_id": dispatch.execution_id, "dispatch_sha256": binding["row_dispatch_sha256"]}}
     packer = msgpack_numpy.Packer()

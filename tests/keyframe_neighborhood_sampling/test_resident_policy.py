@@ -18,6 +18,7 @@ from websockets.asyncio.server import serve
 from experiments.keyframe_neighborhood_sampling import direct_provenance as provenance
 from experiments.keyframe_neighborhood_sampling import resident_policy as resident
 from experiments.keyframe_neighborhood_sampling import submit_direct as runner
+from experiments.keyframe_neighborhood_sampling.formal_matrix import build_formal_matrix
 from experiments.keyframe_neighborhood_sampling.runner_contract import DirectDispatch
 from experiments.keyframe_neighborhood_sampling.runner_contract import process_exit_record
 from experiments.keyframe_neighborhood_sampling.runner_contract import process_start_record
@@ -141,7 +142,9 @@ def test_controller_uses_one_resident_queue_for_all_48(monkeypatch, tmp_path):
     assert [r["row_id"] for r in calls[0][3]] == list(range(48))
 
 
-def test_resident_rows_acquire_once_load_once_and_cleanup_once(monkeypatch, tmp_path):
+@pytest.mark.parametrize("stage", ["development_smoke", "formal"])
+def test_resident_rows_acquire_once_load_once_and_cleanup_once(monkeypatch, tmp_path, stage):
+    rows = build_smoke_matrix()["rows"] if stage == "development_smoke" else build_formal_matrix()["rows"][1000:1600]
     counts = {"admission": 0, "lease": 0, "load": 0, "cleanup": 0}
     class Context:
         pass_fds = (9,)
@@ -157,9 +160,10 @@ def test_resident_rows_acquire_once_load_once_and_cleanup_once(monkeypatch, tmp_
             counts["lease"] += 1
             return self
     class Execution:
-        def __init__(self, dispatch, *args):
+        def __init__(self, dispatch, *args, session_row_count):
             self.dispatch = dispatch
             self.digest = "c" * 64
+            assert session_row_count == len(rows)
         def start(self, role, cmd, fds):
             counts["load"] += 1
             assert "--exclusive-clients" in cmd
@@ -182,15 +186,16 @@ def test_resident_rows_acquire_once_load_once_and_cleanup_once(monkeypatch, tmp_
     path = root / "submission.json"
     write_once_record(path, {"runtime_profile": {"lock_directory": str(tmp_path)}, "attempt_id": 0,
                             "repository_commit_sha": "a" * 40, "launch_manifest_sha256": "b" * 64,
-                            "smoke_matrix_sha256": "c" * 64})
+                            "smoke_matrix_sha256": "c" * 64, "formal_matrix_sha256": "d" * 64,
+                            "row_ids": [r["row_id"] for r in rows], "shard_id": 1 if stage == "formal" else None})
     # Linux process identity is deliberately stubbed in this CPU orchestration fixture.
     real_read = type(root).read_text
     def read_text(path, *a, **k):
         return "55555555-5555-4555-8555-555555555555" if str(path) == "/proc/sys/kernel/random/boot_id" else real_read(path, *a, **k)
     monkeypatch.setattr(type(root), "read_text", read_text)
-    resident.run_resident_rows(root, "development_smoke", path, build_smoke_matrix()["rows"], (GPU, GPU), threading.Event())
+    resident.run_resident_rows(root, stage, path, rows, (GPU, GPU), threading.Event())
     assert counts == {"admission": 2, "lease": 1, "load": 1, "cleanup": 1}
-    assert [row for row, _ in visited] == list(range(48))
+    assert [row for row, _ in visited] == [row["row_id"] for row in rows]
     assert len({id(session) for _, session in visited}) == 1
 
 
@@ -219,18 +224,20 @@ def test_actual_policy_reset_clears_state_but_keeps_model_and_compiled_functions
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux inherited-listener validation")
-def test_real_proxies_share_one_model_and_record_distinct_resets(tmp_path):
+@pytest.mark.parametrize(("stage", "indices"), [("development_smoke", (0, 1)), ("formal", (999, 1000, 1599))])
+def test_real_proxies_share_one_model_and_record_distinct_resets(tmp_path, stage, indices):
     async def exercise():
         root = tmp_path / "runs/keyframe_neighborhood_sampling/proxies"
         (root / "protocol").mkdir(parents=True)
-        matrix = build_smoke_matrix()
-        write_once_record(root / "protocol/smoke_matrix.json", matrix)
+        matrix = build_smoke_matrix() if stage == "development_smoke" else build_formal_matrix()
+        name = "smoke_matrix.json" if stage == "development_smoke" else "formal_matrix.json"
+        matrix_hash = write_once_record(root / "protocol" / name, matrix)
         policy = TinyPolicy()
         with runner.PortReservation() as model_port:
             session = DirectDispatch(
                 execution_id=str(uuid.uuid4()), run_root=str(root), repository_commit_sha="a" * 40,
                 stage="policy_session", launch_manifest_sha256="b" * 64, submission_plan_sha256="c" * 64,
-                matrix_sha256="d" * 64, attempt_id=0, row_id=None, shard_id=None, gpu_uuids=(GPU, GPU),
+                matrix_sha256=matrix_hash, attempt_id=0, row_id=None, shard_id=None, gpu_uuids=(GPU, GPU),
                 host_name="fixture", host_boot_id="55555555-5555-4555-8555-555555555555",
                 policy_port=model_port.port, gpu_layout="colocated",
             )
@@ -242,9 +249,10 @@ def test_real_proxies_share_one_model_and_record_distinct_resets(tmp_path):
             server_task = asyncio.create_task(server.run())
             receipts = []
             try:
-                for index in (0, 1):
+                for index in indices:
                     with runner.PortReservation() as row_port:
-                        dispatch = replace(session, execution_id=str(uuid.uuid4()), stage="development_smoke", row_id=index, policy_port=row_port.port)
+                        dispatch = replace(session, execution_id=str(uuid.uuid4()), stage=stage, row_id=index,
+                                           shard_id=int(index >= 1000) if stage == "formal" else None, policy_port=row_port.port)
                         row_path = provenance.dispatch_path(root, stage=dispatch.stage, attempt_id=0, row_id=index)
                         row_path.parent.mkdir(parents=True)
                         row_hash = write_once_record(row_path, dispatch.as_record())
@@ -274,7 +282,7 @@ def test_real_proxies_share_one_model_and_record_distinct_resets(tmp_path):
                             task.cancel()
                             with suppress(asyncio.CancelledError):
                                 await task
-                assert policy.reset_count == 2
+                assert policy.reset_count == len(indices)
                 assert receipts[0]["model_process_pid"] == receipts[1]["model_process_pid"] == os.getpid()
                 assert receipts[0]["row_execution_id"] != receipts[1]["row_execution_id"]
             finally:
@@ -284,20 +292,25 @@ def test_real_proxies_share_one_model_and_record_distinct_resets(tmp_path):
     asyncio.run(asyncio.wait_for(exercise(), timeout=20))
 
 
-@pytest.fixture
-def resident_evidence(tmp_path):
+@pytest.fixture(params=[None, 0, 999, 1000, 1599])
+def resident_evidence(tmp_path, request):
+    stage = "development_smoke" if request.param is None else "formal"
+    row_id = request.param or 0
+    shard_id = int(row_id >= 1000) if stage == "formal" else None
     root = tmp_path / "runs/keyframe_neighborhood_sampling/evidence"
     (root / "protocol").mkdir(parents=True)
-    matrix = build_smoke_matrix()
-    write_once_record(root / "protocol/smoke_matrix.json", matrix)
-    write_once_record(root / "protocol/submission_record.json", {"runtime_profile": {"policy_lifetime": "resident"}})
+    matrix = build_smoke_matrix() if stage == "development_smoke" else build_formal_matrix()
+    matrix_hash = write_once_record(root / "protocol" / ("smoke_matrix.json" if stage == "development_smoke" else "formal_matrix.json"), matrix)
+    config = {key: matrix["rows"][row_id][key] for key in ("task", "episode_id", "arm")}
+    submission_name = "submission_record.json" if stage == "development_smoke" else f"submission_record_shard_{shard_id:02d}.json"
+    write_once_record(root / "protocol" / submission_name, {"runtime_profile": {"policy_lifetime": "resident"}})
     session = DirectDispatch(
         execution_id=str(uuid.uuid4()), run_root=str(root), repository_commit_sha="a" * 40,
         stage="policy_session", launch_manifest_sha256="b" * 64, submission_plan_sha256="c" * 64,
-        matrix_sha256="d" * 64, attempt_id=0, row_id=None, shard_id=None, gpu_uuids=(GPU, GPU),
+        matrix_sha256=matrix_hash, attempt_id=0, row_id=None, shard_id=None, gpu_uuids=(GPU, GPU),
         host_name="fixture", host_boot_id="55555555-5555-4555-8555-555555555555", policy_port=22222, gpu_layout="colocated",
     )
-    row = replace(session, execution_id=str(uuid.uuid4()), stage="development_smoke", row_id=0, policy_port=22223)
+    row = replace(session, execution_id=str(uuid.uuid4()), stage=stage, row_id=row_id, shard_id=shard_id, policy_port=22223)
     def envelope(dispatch):
         path = provenance.dispatch_path(root, stage=dispatch.stage, attempt_id=0, row_id=dispatch.row_id, execution_id=dispatch.execution_id)
         path.parent.mkdir(parents=True)
@@ -318,12 +331,12 @@ def resident_evidence(tmp_path):
                "row_dispatch_sha256": row_env["dispatch_sha256"], "session": session_env,
                "policy_start_sha256": model_start}
     binding_hash = write_once_record(row_path.parent / "policy_session.json", binding)
-    write_once_record(session_path.parent / "row_plan.json", {"stage": "development_smoke", "row_ids": [0]})
+    write_once_record(session_path.parent / "row_plan.json", {"stage": stage, "row_ids": [row_id], "submission_shard_id": shard_id})
     reset_hash = write_once_record(row_path.parent / "resident_reset.json", {
         "schema": "resident-reset-v1", "row_execution_id": row.execution_id,
         "session_execution_id": session.execution_id, "binding_sha256": binding_hash,
         "state": dict(resident.RESET_STATE), "model_process_pid": 101,
-        "selector_config": ROW, "recorded_utc": utc_now(),
+        "selector_config": config, "recorded_utc": utc_now(),
     })
     completion = {"resident_policy": {"binding_sha256": binding_hash, "reset_sha256": reset_hash}, "finished_utc": utc_now()}
     exit_hash = write_once_record(session_path.parent / "policy_exit.json", process_exit_record(
@@ -354,7 +367,7 @@ def test_real_resident_audit_rejects_broken_evidence(resident_evidence, fault):
         if fault == "session_cleanup":
             data["cleanup_confirmed"] = False
         elif fault == "wrong_selector":
-            data["selector_config"]["arm"] = "OC5"
+            data["selector_config"]["arm"] = "wrong"
         else:
             data["state"]["history_empty"] = False
         from experiments.keyframe_neighborhood_sampling.runner_contract import canonical_bytes
@@ -363,3 +376,38 @@ def test_real_resident_audit_rejects_broken_evidence(resident_evidence, fault):
             completion["resident_policy"]["reset_sha256"] = sha256_file(path)
     with pytest.raises((ArtifactContractError, ValueError)):
         provenance.audit_resident_binding(envelope, root, completion)
+
+
+def test_queue_deadline_preserves_each_trajectory_limit():
+    assert runner.ROW_SECONDS == 43200
+    assert runner.resident_session_seconds(500) == 240 + 500 * (43200 + 120 + 40)
+    for invalid in (None, True, 0, -1, 1001):
+        with pytest.raises(ValueError, match="queue"):
+            runner.resident_session_seconds(invalid)
+
+
+@pytest.mark.parametrize("fault", [None, "cross_arm", "per_row", "mixed", "failed"])
+def test_formal_resident_gate_requires_matching_smoke_lifetime(tmp_path, fault):
+    (tmp_path / "protocol").mkdir()
+    architecture = {"resident_cross_arm_reset": {"passed": fault != "cross_arm"}}
+    audit = {"passed": fault != "failed", "policy_lifetimes": ["resident"]}
+    if fault == "per_row":
+        audit["policy_lifetimes"] = ["per_row"]
+    if fault == "mixed":
+        audit["policy_lifetimes"] = ["per_row", "resident"]
+    write_once_record(tmp_path / "protocol/architecture_pass_report.json", architecture)
+    write_once_record(tmp_path / "protocol/development_smoke_audit.json", audit)
+    if fault:
+        with pytest.raises(ValueError, match="Resident formal"):
+            resident.require_resident_smoke(tmp_path)
+    else:
+        resident.require_resident_smoke(tmp_path)
+
+
+def test_resident_formal_never_reads_development_matrix(resident_evidence):
+    _root, envelope, *_ = resident_evidence
+    dispatch = DirectDispatch.from_record(envelope["dispatch"])
+    row = resident.load_resident_row(dispatch)
+    assert row["dataset"] == ("test" if dispatch.stage == "formal" else "val")
+    with pytest.raises(ValueError, match="digest"):
+        resident.load_resident_row(replace(dispatch, matrix_sha256="0" * 64))

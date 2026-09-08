@@ -54,8 +54,8 @@ def validate_direct_submission(submission: Mapping[str, Any], *, stage: str) -> 
         raise ArtifactContractError("Invalid direct GPU admission policy") from exc
     if profile.get("policy_lifetime", "per_row") not in {"per_row", "resident"}:
         raise ArtifactContractError("Unknown policy lifetime")
-    if profile.get("policy_lifetime") == "resident" and (layout != "colocated" or stage == "formal"):
-        raise ArtifactContractError("Resident lifecycle is currently a colocated smoke-only backend")
+    if profile.get("policy_lifetime") == "resident" and layout != "colocated":
+        raise ArtifactContractError("Resident lifecycle requires explicit colocated placement")
     if stage == "architecture_smoke":
         allocations = [submission.get("gpu_uuids")]
         width = 1
@@ -391,8 +391,12 @@ def audit_direct_completion(envelope: Mapping[str, Any], run_root: Path, *, requ
     if dispatch.stage == "policy_session":
         if set(roles) != {"policy"} or "resident_policy" in completion:
             raise ArtifactContractError("Resident session must own exactly one real policy process")
-    elif dispatch.stage == "development_smoke":
-        name = "submission_record.json" if dispatch.attempt_id == 0 else f"submission_record_attempt_{dispatch.attempt_id:02d}.json"
+    elif dispatch.stage in {"development_smoke", "formal"}:
+        if dispatch.stage == "formal":
+            name = (f"submission_record_shard_{dispatch.shard_id:02d}.json" if dispatch.attempt_id == 0
+                    else f"submission_record_attempt_{dispatch.attempt_id:02d}_shard_{dispatch.shard_id:02d}.json")
+        else:
+            name = "submission_record.json" if dispatch.attempt_id == 0 else f"submission_record_attempt_{dispatch.attempt_id:02d}.json"
         submission = _load_canonical(run_root / "protocol" / name)
         resident = submission.get("runtime_profile", {}).get("policy_lifetime") == "resident"
         if resident:
@@ -405,6 +409,7 @@ def audit_direct_completion(envelope: Mapping[str, Any], run_root: Path, *, requ
 def audit_resident_binding(envelope: Mapping[str, Any], run_root: Path, completion: dict) -> None:
     """Bind each proxy/reset to the real resident process and its final cleanup."""
     from experiments.keyframe_neighborhood_sampling.resident_policy import RESET_STATE  # noqa: PLC0415
+    from experiments.keyframe_neighborhood_sampling.resident_policy import load_resident_row  # noqa: PLC0415
 
     row, path = _load_runner(envelope, run_root)
     binding_path = path.parent / "policy_session.json"
@@ -431,14 +436,16 @@ def audit_resident_binding(envelope: Mapping[str, Any], run_root: Path, completi
     if (plan.get("stage") != row.stage or row.row_id not in plan.get("row_ids", [])
             or len(plan["row_ids"]) != len(set(plan["row_ids"]))):
         raise ArtifactContractError("Resident session plan does not contain this row uniquely")
+    if row.stage == "formal" and plan.get("submission_shard_id") != row.shard_id:
+        raise ArtifactContractError("Resident session plan belongs to a different formal shard")
     if (reset.get("schema") != "resident-reset-v1" or reset.get("row_execution_id") != row.execution_id
             or reset.get("session_execution_id") != session.execution_id
             or reset.get("binding_sha256") != sha256_file(binding_path) or reset.get("state") != RESET_STATE
             or type(reset.get("model_process_pid")) is not int or reset["model_process_pid"] <= 0):
         raise ArtifactContractError("Resident reset receipt is incomplete or mismatched")
-    matrix = json.loads((run_root / "protocol/smoke_matrix.json").read_bytes())
+    expected_row = load_resident_row(row)
     config = reset.get("selector_config", {})
-    if any(config.get(field) != matrix["rows"][row.row_id][field] for field in ("task", "episode_id", "arm")):
+    if any(config.get(field) != expected_row[field] for field in ("task", "episode_id", "arm")):
         raise ArtifactContractError("Resident reset configured the wrong trajectory")
     audit_direct_completion(binding["session"], run_root, required_roles={"policy"})
     started, exited = _validated_role_evidence(session, session_path, "policy")
