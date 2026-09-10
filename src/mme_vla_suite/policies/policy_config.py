@@ -24,8 +24,9 @@ def create_trained_policy(
     sample_kwargs: dict[str, Any] | None = None,
     default_prompt: str | None = None,
     norm_stats: dict[str, transforms.NormStats] | None = None,
+    experimental_memory_expansion: str | None = None,
 ) -> _policy.MME_VLA_Policy:
-    
+    checkpoint_dir = pathlib.Path(checkpoint_dir)
     repack_transforms = repack_transforms or transforms.Group()
     
     logging.info(f"Checking history config")
@@ -43,8 +44,44 @@ def create_trained_policy(
         )
     
 
+    policy_class = _policy.MME_VLA_Policy
+    policy_metadata = dict(train_config.policy_metadata or {})
+    if experimental_memory_expansion is not None:
+        # Deliberately opt-in and family-specific. Never edit checkpoint metadata
+        # or widen the completed experiments' 32/512 validation rules.
+        from omegaconf import OmegaConf
+        from mme_vla_suite.models.config.utils import get_history_config
+        from mme_vla_suite.policies.uniform_keyframe_expansion_policy import UniformKeyframeExpansionPolicy
+        from mme_vla_suite.shared.uniform_keyframe_config import EXPANSION_FAMILY, expanded_history_mapping
+
+        if experimental_memory_expansion != EXPANSION_FAMILY:
+            raise ValueError("Unknown experimental memory expansion family")
+        if seed != 7 or isinstance(seed, bool):
+            raise ValueError("Uniform/keyframe expansion requires evaluation policy seed 7")
+        if history_config is None or not history_config_path.is_file():
+            raise ValueError("Expansion requires the original checkpoint history_config.txt")
+        if (not train_config.model.pi05 or train_config.model.action_horizon != 20
+                or train_config.model.use_symbolic_prompt
+                or train_config.model.symbolic_source != "none"):
+            raise ValueError("Expansion requires unchanged pi0.5 action horizon and no symbolic prompting")
+        source = OmegaConf.to_container(get_history_config(history_config.strip()), resolve=True)
+        effective, evidence = expanded_history_mapping(source)
+        train_config = dataclasses.replace(
+            train_config,
+            model=dataclasses.replace(train_config.model, history_config=OmegaConf.create(effective), use_history=True),
+        )
+        policy_class = UniformKeyframeExpansionPolicy
+        policy_metadata["uniform_keyframe_expansion"] = evidence
+        logging.info("Explicit test-time expansion: %s", evidence)
+
     logging.info("Loading model...")
-    model = train_config.model.load(_model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16))
+    params = _model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16)
+    if experimental_memory_expansion is None:
+        model = train_config.model.load(params)
+    else:
+        # Missing, extra or shape-mismatched parameters must fail, not initialize
+        # a new component or silently intersect the checkpoint tree.
+        model = train_config.model.load(params, remove_extra_params=False)
     data_config = train_config.data.create(train_config.assets_dirs, train_config.model)
     
     if norm_stats is None:
@@ -55,7 +92,7 @@ def create_trained_policy(
     print("Training config: ", train_config)
     print("Data config: ", data_config)
 
-    return _policy.MME_VLA_Policy(
+    return policy_class(
         model,
         seed=seed,
         transforms=[
@@ -72,7 +109,7 @@ def create_trained_policy(
             *repack_transforms.outputs,
         ],
         sample_kwargs=sample_kwargs,
-        metadata=train_config.policy_metadata,
+        metadata=policy_metadata,
         norm_stats=norm_stats,
         use_quantiles=data_config.use_quantile_norm
     )

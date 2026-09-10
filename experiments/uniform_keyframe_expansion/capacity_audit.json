@@ -1,0 +1,254 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-09",
+  "purpose": "Post-hoc planning of fixed capacity; no success-rate optimization or new policy evaluation",
+  "population_filter": "All recorded episodes in U, OC, OC3, OC5; no success/failure selection",
+  "source_sha256": {
+    "athena_records.json": "1dda96f1673fd971d1f6fcd7f3a389ad5562789de95d54aff7660dcacfd5a11b",
+    "lighthouse_records.json": "aabaee8fc1dd1685b516aa4aaac31f249e0fdd94fedd6ba740047173e052f0ac"
+  },
+  "total_policy_calls": 62492,
+  "proposed_fixed_frame_slots": 48,
+  "base_U_frame_slots": 32,
+  "tokens_per_frame": 16,
+  "proposed_memory_token_slots": 768,
+  "results": {
+    "U": {
+      "episodes": 800,
+      "policy_calls": 14599,
+      "max_visible_boundaries": 15,
+      "max_new_boundaries_not_in_U": 14,
+      "union_size_quantiles": {
+        "min": 1.0,
+        "p50": 34.0,
+        "p90": 40.0,
+        "p95": 41.0,
+        "p99": 44.0,
+        "max": 46.0
+      },
+      "episode_peak_quantiles": {
+        "p50": 35.0,
+        "p90": 42.0,
+        "p95": 42.0,
+        "p99": 46.0,
+        "max": 46.0
+      },
+      "capacity_overflows": {
+        "40": {
+          "calls": 1153,
+          "episodes": 118
+        },
+        "48": {
+          "calls": 0,
+          "episodes": 0
+        },
+        "56": {
+          "calls": 0,
+          "episodes": 0
+        },
+        "64": {
+          "calls": 0,
+          "episodes": 0
+        }
+      },
+      "random_nonkey_candidate_shortage_calls": 0,
+      "max_union_by_task": {
+        "BinFill": 41,
+        "ButtonUnmask": 35,
+        "ButtonUnmaskSwap": 36,
+        "InsertPeg": 35,
+        "MoveCube": 36,
+        "PatternLock": 41,
+        "PickHighlight": 35,
+        "PickXtimes": 42,
+        "RouteStick": 41,
+        "StopCube": 39,
+        "SwingXtimes": 40,
+        "VideoPlaceButton": 42,
+        "VideoPlaceOrder": 46,
+        "VideoRepick": 43,
+        "VideoUnmask": 35,
+        "VideoUnmaskSwap": 35
+      }
+    },
+    "OC": {
+      "episodes": 800,
+      "policy_calls": 15246,
+      "max_visible_boundaries": 15,
+      "max_new_boundaries_not_in_U": 14,
+      "union_size_quantiles": {
+        "min": 1.0,
+        "p50": 34.0,
+        "p90": 40.0,
+        "p95": 41.0,
+        "p99": 44.0,
+        "max": 46.0
+      },
+      "episode_peak_quantiles": {
+        "p50": 35.0,
+        "p90": 42.0,
+        "p95": 42.0,
+        "p99": 46.0,
+        "max": 46.0
+      },
+      "capacity_overflows": {
+        "40": {
+          "calls": 1212,
+          "episodes": 121
+        },
+        "48": {
+          "calls": 0,
+          "episodes": 0
+        },
+        "56": {
+          "calls": 0,
+          "episodes": 0
+        },
+        "64": {
+          "calls": 0,
+          "episodes": 0
+        }
+      },
+      "random_nonkey_candidate_shortage_calls": 0,
+      "max_union_by_task": {
+        "BinFill": 40,
+        "ButtonUnmask": 35,
+        "ButtonUnmaskSwap": 36,
+        "InsertPeg": 35,
+        "MoveCube": 36,
+        "PatternLock": 41,
+        "PickHighlight": 35,
+        "PickXtimes": 42,
+        "RouteStick": 41,
+        "StopCube": 39,
+        "SwingXtimes": 40,
+        "VideoPlaceButton": 42,
+        "VideoPlaceOrder": 46,
+        "VideoRepick": 44,
+        "VideoUnmask": 35,
+        "VideoUnmaskSwap": 35
+      }
+    },
+    "OC3": {
+      "episodes": 800,
+      "policy_calls": 15867,
+      "max_visible_boundaries": 15,
+      "max_new_boundaries_not_in_U": 14,
+      "union_size_quantiles": {
+        "min": 1.0,
+        "p50": 34.0,
+        "p90": 41.0,
+        "p95": 43.0,
+        "p99": 46.0,
+        "max": 46.0
+      },
+      "episode_peak_quantiles": {
+        "p50": 35.0,
+        "p90": 42.0,
+        "p95": 42.0,
+        "p99": 46.0,
+        "max": 46.0
+      },
+      "capacity_overflows": {
+        "40": {
+          "calls": 1866,
+          "episodes": 107
+        },
+        "48": {
+          "calls": 0,
+          "episodes": 0
+        },
+        "56": {
+          "calls": 0,
+          "episodes": 0
+        },
+        "64": {
+          "calls": 0,
+          "episodes": 0
+        }
+      },
+      "random_nonkey_candidate_shortage_calls": 0,
+      "max_union_by_task": {
+        "BinFill": 40,
+        "ButtonUnmask": 35,
+        "ButtonUnmaskSwap": 36,
+        "InsertPeg": 35,
+        "MoveCube": 36,
+        "PatternLock": 41,
+        "PickHighlight": 35,
+        "PickXtimes": 40,
+        "RouteStick": 41,
+        "StopCube": 39,
+        "SwingXtimes": 40,
+        "VideoPlaceButton": 42,
+        "VideoPlaceOrder": 46,
+        "VideoRepick": 42,
+        "VideoUnmask": 35,
+        "VideoUnmaskSwap": 35
+      }
+    },
+    "OC5": {
+      "episodes": 800,
+      "policy_calls": 16780,
+      "max_visible_boundaries": 15,
+      "max_new_boundaries_not_in_U": 14,
+      "union_size_quantiles": {
+        "min": 1.0,
+        "p50": 34.0,
+        "p90": 41.0,
+        "p95": 43.0,
+        "p99": 45.0,
+        "max": 46.0
+      },
+      "episode_peak_quantiles": {
+        "p50": 35.0,
+        "p90": 42.0,
+        "p95": 42.0,
+        "p99": 46.0,
+        "max": 46.0
+      },
+      "capacity_overflows": {
+        "40": {
+          "calls": 1815,
+          "episodes": 109
+        },
+        "48": {
+          "calls": 0,
+          "episodes": 0
+        },
+        "56": {
+          "calls": 0,
+          "episodes": 0
+        },
+        "64": {
+          "calls": 0,
+          "episodes": 0
+        }
+      },
+      "random_nonkey_candidate_shortage_calls": 0,
+      "max_union_by_task": {
+        "BinFill": 40,
+        "ButtonUnmask": 35,
+        "ButtonUnmaskSwap": 36,
+        "InsertPeg": 35,
+        "MoveCube": 36,
+        "PatternLock": 41,
+        "PickHighlight": 37,
+        "PickXtimes": 40,
+        "RouteStick": 41,
+        "StopCube": 39,
+        "SwingXtimes": 40,
+        "VideoPlaceButton": 42,
+        "VideoPlaceOrder": 46,
+        "VideoRepick": 43,
+        "VideoUnmask": 35,
+        "VideoUnmaskSwap": 35
+      }
+    }
+  },
+  "limits": [
+    "These are previously observed histories, not trajectories of either proposed new arm.",
+    "No assurance that new rollouts cannot overflow or lack random candidates.",
+    "The original outcomes have been inspected previously; this is an explicitly post-hoc follow-up."
+  ]
+}
