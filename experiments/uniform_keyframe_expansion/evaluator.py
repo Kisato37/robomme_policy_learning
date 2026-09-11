@@ -13,6 +13,7 @@ import errno
 import io
 import json
 from pathlib import Path
+import sys
 import time
 from typing import Any, Callable
 
@@ -34,6 +35,35 @@ class BenchmarkComponents:
 
 class ExpansionEvaluationError(RuntimeError):
     """A deterministic adapter/metadata failure; not a benchmark outcome."""
+
+
+def _benchmark_stop_flag(value: Any) -> bool:
+    """Read one boolean without broad truthiness or multi-environment reduction.
+
+    The original DemonstrationWrapper emits torch.bool batch entries; EnvRunner
+    passes one of them through unchanged. Keep that interface and the original
+    terminal decision, normalizing only its scalar representation in this
+    experiment adapter. The simulator has already imported Torch; do not import
+    a production backend here or change its configured initialization order.
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, np.ndarray):
+        if value.dtype == np.dtype(bool) and value.shape in ((), (1,)):
+            return bool(value.item())
+    else:
+        torch = sys.modules.get("torch")
+        if torch is not None and isinstance(value, torch.Tensor):
+            if (value.dtype == torch.bool and value.layout == torch.strided
+                    and tuple(value.shape) in ((), (1,))):
+                try:
+                    return bool(value.item())
+                except (RuntimeError, ValueError, NotImplementedError) as exc:
+                    raise ExpansionEvaluationError("Benchmark stop flag has no readable boolean value") from exc
+    raise ExpansionEvaluationError(
+        "Benchmark stop flag must be a scalar or single-environment boolean; "
+        f"received {type(value).__module__}.{type(value).__name__} "
+        f"with dtype={getattr(value, 'dtype', None)} and shape={getattr(value, 'shape', None)}")
 
 
 def _finite_array(value, shape_tail: tuple[int, ...], name: str) -> np.ndarray:
@@ -276,8 +306,7 @@ def evaluate_attempt(store, row: dict, attempt_id: int, *, env_factory: Callable
             action = state.action_plan.popleft()
             observation, stopped, status = env.step(action)
             state.count += 1
-            if not isinstance(stopped, (bool, np.bool_)):
-                raise ExpansionEvaluationError("Benchmark stop flag must be boolean")
+            stopped = _benchmark_stop_flag(stopped)
             if stopped and status not in {"success", "fail", "timeout", "error"}:
                 raise ExpansionEvaluationError("Unknown official benchmark terminal")
             if stopped or state.count >= row["max_steps"]:

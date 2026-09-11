@@ -276,6 +276,61 @@ def test_early_official_terminal_preserved_and_never_stepped_past(tmp_path, stat
     assert store.writer.failure is None
 
 
+@pytest.mark.parametrize(("row_id", "status", "stop_at", "expected", "steps"), [
+    (0, "success", 18, "success", 18),
+    (1, "fail", 18, "fail", 18),
+    (0, "timeout", 1, "timeout", 1),
+    (1, "error", 1, "error", 1),
+    (0, "success", 10000, "short_limit", 64),
+    (2, "success", 10000, "timeout", 1300),
+])
+def test_original_benchmark_boolean_tensor_contract(
+        tmp_path, monkeypatch, row_id, status, stop_at, expected, steps):
+    # Exercise the actual benchmark batch producer on CPU, not a substitute
+    # Python bool. DemonstrationWrapper.step takes [-1] of these bool tensors;
+    # EnvRunner.step returns `terminated or truncated` without converting it.
+    batch_path = (REPO / "third_party/robomme_benchmark/src/robomme/robomme_env"
+                  / "utils/planner_denseStep.py")
+    batch_spec = importlib.util.spec_from_file_location("_expansion_step_batch", batch_path)
+    batch_module = importlib.util.module_from_spec(batch_spec)
+    batch_spec.loader.exec_module(batch_module)
+    original_step = Environment.step
+
+    def tensor_step(self, action):
+        observation, stop, outcome = original_step(self, action)
+        batch = batch_module.to_step_batch([({}, 0.0, stop, False, {})])
+        terminated, truncated = batch[2][-1], batch[3][-1]
+        return observation, terminated or truncated, outcome
+
+    monkeypatch.setattr(Environment, "step", tensor_step)
+    run, store, envs, client = run_case(
+        tmp_path, row_id=row_id, stop_at=stop_at, status=status, stage_period=100000)
+    result = run()
+    assert result["terminal_reason"] == expected
+    assert result["success"] is (expected == "success")
+    assert result["environment_steps"] == envs[0].steps == steps
+    assert result["terminal_metadata"]["official_stop_flag"] is (stop_at <= steps)
+    assert envs[0].closed and client.closed and store.writer.failure is None
+
+
+@pytest.mark.parametrize("invalid", [0, 1, "False", [False], np.array([False, True])])
+def test_malformed_stop_flag_remains_hard_stop(tmp_path, monkeypatch, invalid):
+    original_step = Environment.step
+
+    def malformed_step(self, action):
+        observation, _, status = original_step(self, action)
+        return observation, invalid, status
+
+    monkeypatch.setattr(Environment, "step", malformed_step)
+    run, store, envs, client = run_case(tmp_path)
+    with pytest.raises(ExpansionEvaluationError, match="Benchmark stop flag"):
+        run()
+    assert store.writer.result is None
+    assert store.writer.failure["kind"] == "hard_stop"
+    assert store.writer.failure["evidence"]["automatic_retry"] is False
+    assert envs[0].steps == 1 and envs[0].closed and client.closed
+
+
 @pytest.mark.parametrize(("row_id", "expected", "steps", "calls"), [(0, "short_limit", 64, 4), (2, "timeout", 1300, 82)])
 def test_exact_short_and_full_limit_without_extra_step(tmp_path, row_id, expected, steps, calls):
     # Sparse stage changes avoid intentionally unsupported dense boundary unions.
