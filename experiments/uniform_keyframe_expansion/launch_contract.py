@@ -404,7 +404,7 @@ def _smoke_gate(ref, binding):
 
 def _formal_freeze(evidence, binding):
     freeze = _json_ref(evidence["freeze"], "formal freeze", "protocol_freeze")
-    _same(freeze.get("protocol_version"), "v1.0", "formal freeze version")
+    _same(freeze.get("protocol_version"), "v1.1", "formal freeze version")
     _same(freeze.get("binding"), binding, "formal freeze runtime")
     for key in ("protocol", "end_to_end_gate", "architecture_gate", "exposure"):
         _same(freeze.get(f"{key}_sha256"), evidence[key]["sha256"], f"freeze {key}")
@@ -486,8 +486,8 @@ def _validate_request(request):
         raise ExpansionLaunchError(f"Stage {stage} requires exactly evidence {sorted(required)}")
     protocol = _read_ref(evidence["protocol"], "protocol snapshot")
     version = re.search(r"^\*\*Protocol version:\*\* (v[0-9.]+)\s*$", protocol.read_text(), re.MULTILINE)
-    if version is None or version.group(1) not in (("v1.0",) if stage == "formal" else ("v0.9", "v1.0")):
-        raise ExpansionLaunchError("Formal requires the reviewed v1.0 protocol, never v0.9")
+    if version is None or version.group(1) not in (("v1.1",) if stage == "formal" else ("v0.9", "v1.0", "v1.1")):
+        raise ExpansionLaunchError("Formal requires the reviewed v1.1 protocol")
     provenance = store.manifest["provenance"]
     _same(evidence["protocol"]["sha256"], provenance["protocol_sha256"], "stored protocol")
     _same(evidence["environment"]["sha256"], provenance["environment_manifest_sha256"], "stored environment")

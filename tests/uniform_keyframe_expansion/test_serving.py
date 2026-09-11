@@ -132,10 +132,12 @@ def wait_released(server):
 
 def test_real_loopback_reset_append_infer_and_cross_arm_new_connection():
     with loopback() as (policy, server, port):
+        assert server._keepalive_timeout == serving.TRANSPORT_KEEPALIVE_TIMEOUT_SECONDS
         for arm in ("UK48", "UN48"):
             with client(port) as remote:
                 metadata = remote.get_server_metadata()
                 assert metadata["effective_memory_budget"] == 768
+                assert metadata["transport_keepalive_timeout_seconds"] == 600
                 assert metadata["direct_execution"] == IDENTITY
                 reply = remote.reset(config(arm))
                 evidence = serving.validate_reset_response(reply, config(arm))
@@ -264,6 +266,7 @@ def test_client_local_lifecycle_and_bad_config_do_not_send_partial_requests():
     ("policy_variant", U_POLICY_VARIANT),
     ("effective_memory_budget", 512), ("evaluation_policy_seed", 42),
     ("resident_policy", False), ("strict_weight_tree_load", False),
+    ("transport_keepalive_timeout_seconds", 20),
     ("source_history_config_sha256", "b" * 64), ("effective_history_config_sha256", "b" * 64),
     ("model_process_pid", True), ("direct_execution", {**IDENTITY, "dispatch_sha256": "b" * 64}),
 ])
@@ -294,6 +297,7 @@ def test_connection_failure_does_not_retry_and_response_timeout_remains_transpor
     fake_ws.recv.side_effect = [msgpack_numpy.packb(server._metadata), TimeoutError("bounded receive")]
     with mock.patch.object(serving.websockets.sync.client, "connect", return_value=fake_ws) as dial:
         remote = client(12345)
+        assert dial.call_args.kwargs["ping_timeout"] == serving.TRANSPORT_KEEPALIVE_TIMEOUT_SECONDS
         with pytest.raises(TimeoutError):
             remote.reset(config())
         assert dial.call_count == 1

@@ -1,10 +1,10 @@
 # Uniform-Preserving Keyframe Expansion
 
-**Protocol version:** v1.0
+**Protocol version:** v1.1
 
 **Protocol date:** 2026-09-11
 
-**Status:** frozen for fresh Lighthouse smoke and conditional formal launch
+**Status:** transport-amended; requires fresh Lighthouse gates before conditional formal launch
 
 **Experiment type:** fixed-checkpoint, test-time-only, paired post-hoc follow-up
 
@@ -34,6 +34,31 @@ or pushing to any remote other than the approved writable `lab` remote.
 This is a post-hoc follow-up: the complete 16-task, 50-episode population and
 prior results have already been viewed. It must not be described as an
 untouched-test preregistration.
+
+### 1.1 Transport-only v1.1 amendment
+
+The v1.0 real-checkpoint architecture gate and exact 64-trajectory smoke passed,
+but the first cell of the first v1.0 formal run stopped before a scientific
+outcome was produced. Its first policy request completed in 76.351 seconds;
+before the next history append, the WebSocket had closed with code 1011 and
+`keepalive ping timeout`. The synchronous cold JAX inference blocked the server
+event loop longer than the WebSocket library's default server-side keepalive
+tolerance. The failed attempt remains immutable, is not relabeled as a task
+failure, and is not reused in the v1.1 formal matrix.
+
+Version v1.1 changes only transport liveness. The experiment server and client
+both use a 600-second keepalive timeout, and the server advertises that exact
+value in its validated handshake metadata. The existing 600-second application
+response bound, controller supervision, fail-closed behavior, and no-hidden-
+retry policy remain in force. Selectors, model weights and shapes, tasks,
+episodes, seeds, observations, actions, metrics, and analysis are unchanged.
+
+Because source and protocol digests changed, v1.0 gates cannot authorize v1.1.
+CPU/static validation, the real-checkpoint architecture gate, and the complete
+64-trajectory end-to-end smoke must all be rerun against one new clean commit.
+Only after those gates pass may a new 2,400-cell formal run be created. This is
+a correction restoring the already frozen scientific behavior, not a new
+experimental arm or an infrastructure retry inside the failed v1.0 run.
 
 ## 2. Arms and comparisons
 
@@ -76,6 +101,8 @@ No comparison alone proves why the prior OC result failed.
 | Executed action prefix | First 16 steps, then re-observe and replan |
 | Formal episode limit | 1,300 environment steps |
 | Execution host | Lighthouse |
+| WebSocket keepalive timeout | 600 seconds on both server and client; server value handshake-validated |
+| Application response timeout | 600 seconds |
 
 The model weights must load strictly with no missing, unexpected, or randomly
 initialized parameters. U uses the released 32-frame/512-token model shape.
@@ -233,7 +260,7 @@ capacity, or decide which formal cells to run.
 
 After the preceding gates pass, freeze and checksum:
 
-- this v1.0 protocol;
+- this v1.1 protocol;
 - clean Git commit and approved `lab` push;
 - environment, checkpoint, hardware, and dependency manifests;
 - formal matrix and selector-seed manifest;

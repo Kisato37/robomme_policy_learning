@@ -39,6 +39,7 @@ from mme_vla_suite.shared.uniform_keyframe_expansion import (
 
 
 LOGGER = logging.getLogger(__name__)
+TRANSPORT_KEEPALIVE_TIMEOUT_SECONDS = 600
 RESET_STATE = {
     "seed": 7, "history_empty": True, "boundary_metadata_empty": True,
     "step_idx": -1, "exec_start_idx": 0, "selector_call_index": 0,
@@ -169,6 +170,7 @@ def validate_server_metadata(metadata: Mapping, expected_execution_identity: Map
         "resident_policy": True, "strict_weight_tree_load": True,
         "effective_history_config_sha256": effective_digest,
         "source_history_config_sha256": source_digest,
+        "transport_keepalive_timeout_seconds": TRANSPORT_KEEPALIVE_TIMEOUT_SECONDS,
         "direct_execution": identity,
     }.items():
         _same(metadata.get(key), value, f"Server metadata {key}")
@@ -241,9 +243,12 @@ class ExpansionPolicyServer(_TransportServer):
             "source_history_config_sha256": source_digest,
             "effective_history_config_sha256": effective_digest,
             "model_process_pid": os.getpid(),
+            "transport_keepalive_timeout_seconds": TRANSPORT_KEEPALIVE_TIMEOUT_SECONDS,
         }
         super().__init__(policy, host=host, port=port, metadata=metadata,
-                         listen_fd=listen_fd, **identity)
+                         listen_fd=listen_fd,
+                         keepalive_timeout=TRANSPORT_KEEPALIVE_TIMEOUT_SECONDS,
+                         **identity)
         self._active_trajectory = None
         self._hard_failure = None
         self._policy_variant = policy_variant
@@ -376,7 +381,8 @@ class ExpansionClient:
         try:
             self._ws = websockets.sync.client.connect(
                 f"ws://{host}:{port}", compression=None, max_size=None,
-                open_timeout=connect_timeout, close_timeout=min(connect_timeout, 10), ping_timeout=600,
+                open_timeout=connect_timeout, close_timeout=min(connect_timeout, 10),
+                ping_timeout=TRANSPORT_KEEPALIVE_TIMEOUT_SECONDS,
             )
             metadata = self._unpack(self._ws.recv(timeout=connect_timeout))
             try:

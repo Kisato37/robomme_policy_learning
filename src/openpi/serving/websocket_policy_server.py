@@ -2,6 +2,7 @@ import asyncio
 import http
 import ipaddress
 import logging
+import math
 import os
 import re
 import socket
@@ -92,12 +93,20 @@ class WebsocketPolicyServer:
         listen_fd: int | None = None,
         execution_id: str | None = None,
         dispatch_sha256: str | None = None,
+        keepalive_timeout: float | None = None,
     ) -> None:
+        if keepalive_timeout is not None and (
+            type(keepalive_timeout) not in (int, float)
+            or not math.isfinite(keepalive_timeout)
+            or keepalive_timeout <= 0
+        ):
+            raise ValueError("keepalive_timeout must be a positive finite duration or None")
         self._policy = policy
         self._host = host
         self._port = port
         self._metadata = metadata or {}
         self._listen_fd = listen_fd
+        self._keepalive_timeout = keepalive_timeout
         direct_execution = validate_direct_options(listen_fd, execution_id, dispatch_sha256)
         if direct_execution is not None:
             if "direct_execution" in self._metadata:
@@ -114,11 +123,15 @@ class WebsocketPolicyServer:
         listener = None if self._listen_fd is None else adopt_listening_socket(self._listen_fd)
         try:
             bind_options = {"host": self._host, "port": self._port} if listener is None else {"sock": listener}
+            keepalive_options = (
+                {} if self._keepalive_timeout is None else {"ping_timeout": self._keepalive_timeout}
+            )
             async with _server.serve(
                 self._handler,
                 compression=None,
                 max_size=None,
                 process_request=_health_check,
+                **keepalive_options,
                 **bind_options,
             ) as server:
                 await server.serve_forever()

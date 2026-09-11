@@ -26,7 +26,7 @@ class Fixture:
         self.serial = 0
         self.raw = self.write("source.txt", b"CPU fixture evidence, not a real run or user approval")
         self.lock = self.write("uv.lock", b"fixture lock")
-        self.protocol = self.write("protocol.md", f"# Fixture\n**Protocol version:** {'v1.0' if formal else 'v0.9'}\n".encode())
+        self.protocol = self.write("protocol.md", f"# Fixture\n**Protocol version:** {'v1.1' if formal else 'v0.9'}\n".encode())
         self.evidence = {"protocol": self.protocol}
         for role, revision in (("policy", "a" * 40), ("benchmark", "b" * 40)):
             root = path / role
@@ -153,6 +153,7 @@ class Fixture:
                     "effective_history_config_sha256": (payload_digest(RELEASED_HISTORY_CONFIG)
                                                           if is_u else expected["effective_history_config_sha256"]),
                     "source_history_config_sha256": expected["source_history_config_sha256"],
+                    "transport_keepalive_timeout_seconds": 600,
                     "direct_execution": identity, "model_process_pid": 99 + ordinal}),
             })
         results = []
@@ -182,7 +183,7 @@ class Fixture:
 
     def freeze(self):
         self.evidence["freeze"] = self.write("freeze.json", {"schema_version": 1, "kind": "protocol_freeze",
-            "protocol_version": "v1.0", "binding": self.binding, "sources": [self.raw],
+            "protocol_version": "v1.1", "binding": self.binding, "sources": [self.raw],
             **{f"{key}_sha256": self.evidence[key]["sha256"] for key in ("protocol", "end_to_end_gate", "architecture_gate", "exposure")}})
 
     def request(self, stage="cpu_prepare", *, rows=None):
@@ -359,15 +360,15 @@ def test_formal_requires_full_real_store_audit_and_fresh_same_run_u(tmp_path, mo
         lc.deep_validate_runtime_evidence(plan)
 
 
-@pytest.mark.parametrize("mutation", ["incomplete_smoke", "benchmark_error", "unpaired_smoke", "v09", "exposure"])
+@pytest.mark.parametrize("mutation", ["incomplete_smoke", "benchmark_error", "unpaired_smoke", "v10", "exposure"])
 def test_formal_gates_reject_semantic_and_source_shortcuts(tmp_path, monkeypatch, mutation):
     fixture = Fixture(tmp_path, monkeypatch, formal=True)
     kwargs = {"count": 63} if mutation == "incomplete_smoke" else {"error_at": 0} if mutation == "benchmark_error" else {"unequal_at": 1} if mutation == "unpaired_smoke" else {}
     fixture.formal(**kwargs)
-    if mutation == "v09":
-        # Even if one could rewrite a manifest hash, the protocol version gate
-        # must reject v0.9 for formal. Directly exercise the request validator.
-        Path(fixture.protocol["path"]).write_text("**Protocol version:** v0.9\n")
+    if mutation == "v10":
+        # Even if one could rewrite a manifest hash, formal execution must not
+        # reuse a pre-transport-amendment protocol or its superseded gates.
+        Path(fixture.protocol["path"]).write_text("**Protocol version:** v1.0\n")
         fixture.evidence["protocol"] = lc.file_reference(fixture.protocol["path"])
     if mutation == "exposure":
         exposure = json.loads(Path(fixture.evidence["exposure"]["path"]).read_text())

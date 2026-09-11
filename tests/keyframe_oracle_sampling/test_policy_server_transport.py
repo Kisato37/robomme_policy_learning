@@ -276,6 +276,30 @@ def test_legacy_run_preserves_bind_and_health_options(monkeypatch):
     assert transport._health_check(connection, SimpleNamespace(path="/")) is None
 
 
+def test_explicit_keepalive_timeout_reaches_websocket_server(monkeypatch):
+    captured = {}
+
+    def capture_startup(*args, **kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("stop before binding")
+
+    monkeypatch.setattr(transport._server, "serve", capture_startup)
+    server = transport.WebsocketPolicyServer(
+        FakePolicy(), host="localhost", port=8123, keepalive_timeout=600,
+    )
+    with pytest.raises(RuntimeError, match="stop before binding"):
+        asyncio.run(server.run())
+    assert captured["ping_timeout"] == 600
+    assert captured["host"] == "localhost"
+    assert captured["port"] == 8123
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, float("nan"), float("inf"), "600"])
+def test_invalid_keepalive_timeout_fails_before_server_start(value):
+    with pytest.raises(ValueError, match="keepalive_timeout"):
+        transport.WebsocketPolicyServer(FakePolicy(), keepalive_timeout=value)
+
+
 def test_cli_flags_parse_and_reach_actual_mme_server(reservation, monkeypatch):
     args = tyro.cli(
         serve_policy.Args,

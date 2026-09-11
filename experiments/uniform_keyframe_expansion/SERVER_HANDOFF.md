@@ -1,6 +1,6 @@
 # U / UK48 / UN48 Lighthouse execution handoff
 
-Date: 2026-09-11. Authoritative protocol: `EXPERIMENT_PROTOCOL.md` v1.0.
+Date: 2026-09-11. Authoritative protocol: `EXPERIMENT_PROTOCOL.md` v1.1.
 
 ## Authority and current target
 
@@ -15,7 +15,14 @@ The user approved the fresh same-run design and authorized this sequence:
 
 Never push `origin`. Never overwrite an existing run. Preserve every attempt.
 Existing U/O/OC/R, OC3/OC5, and earlier UK48 smoke/result roots are immutable
-and are not inputs to the v1.0 formal comparison.
+and are not inputs to the v1.1 formal comparison.
+
+The first v1.0 formal dispatch is also immutable failed infrastructure evidence:
+its first cold policy request took 76.351 seconds and the server then closed the
+connection under its default keepalive timeout. It produced no scientific
+outcome and must not be resumed or reused. Version v1.1 sets and handshake-binds
+a 600-second client/server keepalive timeout. All gates and the formal run must
+be fresh on the v1.1 commit.
 
 ## Scientific matrix
 
@@ -46,7 +53,7 @@ policy RNG for each episode.
 
 ## Mandatory gates
 
-Read repository `AGENTS.md`, this handoff, and the full v1.0 protocol before
+Read repository `AGENTS.md`, this handoff, and the full v1.1 protocol before
 execution. Verify a clean `exp/*` checkout at the exact pushed commit.
 
 1. Run the complete relevant CPU regression suite and seal its JUnit/report.

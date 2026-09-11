@@ -1,7 +1,7 @@
 # Uniform 保留＋关键帧扩容：设计依据
 
 日期：2026-09-11。状态：设计说明；正式执行规范以同目录
-`EXPERIMENT_PROTOCOL.md` v1.0 为准。
+`EXPERIMENT_PROTOCOL.md` v1.1 为准。
 
 ## 核心动机
 
@@ -62,3 +62,12 @@ length 变化，因此不能把 U 填充成 768 再声称它仍是原版 U。
 
 这是固定 checkpoint、无训练的 test-time 选择实验。不得加入 symbolic
 subgoal、匹配训练、邻域帧、动作 oracle、未来 boundary 或按结果挑 seed。
+
+## v1.1 仅通信层修订
+
+v1.0 的 64 条 smoke 已通过，但正式实验首条轨迹的第一次冷启动推理耗时
+76.351 秒，超过 WebSocket 服务端默认 keepalive 容忍时间，导致下一次发送
+观测前连接以 `keepalive ping timeout` 关闭。v1.1 只把客户端与服务端的
+keepalive timeout 显式固定为 600 秒，并通过握手元数据验证；科学实验定义
+完全不变。旧失败运行原样保留，新 commit 必须重新通过全部 gate 后才能创建
+新的正式运行。

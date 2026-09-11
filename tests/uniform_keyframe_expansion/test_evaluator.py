@@ -187,6 +187,7 @@ class Client:
                     "policy_variant": self.policy_variant,
                     "effective_memory_budget": 512 if is_u else 768, "evaluation_policy_seed": 7,
                     "resident_policy": True, "strict_weight_tree_load": True, "model_process_pid": 123,
+                    "transport_keepalive_timeout_seconds": 600,
                     "source_history_config_sha256": evidence["source_history_config_sha256"],
                     "effective_history_config_sha256": (payload_digest(RELEASED_HISTORY_CONFIG)
                                                          if is_u else evidence["effective_history_config_sha256"]),
