@@ -246,6 +246,113 @@ def test_live_environment_exact_and_no_mutation(plan, monkeypatch, fault):
     assert b.os.environ == before
 
 
+def declare_simulator_import_environment(plan):
+    profile = plan.environment["roles"]["simulator"]
+    profile["process_environment"]["LD_LIBRARY_PATH"] = "/recorded/graphics:/recorded/other"
+    profile["post_import_process_environment"] = {
+        "LD_LIBRARY_PATH": "/recorded/opencv/lib64:/recorded/graphics:/recorded/other",
+        "SAPIEN_PACKAGE_PATH": "/recorded/site-packages/sapien",
+        "TF_CPP_MIN_LOG_LEVEL": "3",
+    }
+    return profile
+
+
+def test_recorded_import_transition_preserves_both_phases_without_mutation(plan, monkeypatch):
+    profile = declare_simulator_import_environment(plan)
+    original = deepcopy(profile)
+    mock_live_environment(plan, monkeypatch, "simulator")
+    before = dict(b.os.environ)
+    assert b._live_environment(plan, "simulator")["process_environment"] == before
+    with pytest.raises(b.BootstrapError, match="process environment"):
+        b._live_environment(plan, "simulator", phase="after_benchmark_import")
+    assert dict(b.os.environ) == before
+    b.os.environ.update(profile["post_import_process_environment"])
+    after = dict(b.os.environ)
+    evidence = b._live_environment(plan, "simulator", phase="after_benchmark_import")
+    assert evidence["process_environment"] == after
+    assert evidence["phase"] == "after_benchmark_import"
+    with pytest.raises(b.BootstrapError, match="process environment"):
+        b._live_environment(plan, "simulator")
+    assert profile == original and dict(b.os.environ) == after
+
+
+@pytest.mark.parametrize("fault", ["undeclared", "library", "package", "logging", "cuda", "xla", "vulkan"])
+def test_post_import_does_not_silently_accept_live_changes(plan, monkeypatch, fault):
+    profile = declare_simulator_import_environment(plan)
+    mock_live_environment(plan, monkeypatch, "simulator")
+    b.os.environ.update(profile["post_import_process_environment"])
+    if fault == "undeclared":
+        del profile["post_import_process_environment"]
+    else:
+        key = {"library": "LD_LIBRARY_PATH", "package": "SAPIEN_PACKAGE_PATH",
+               "logging": "TF_CPP_MIN_LOG_LEVEL", "cuda": "CUDA_VISIBLE_DEVICES",
+               "xla": "XLA_FLAGS", "vulkan": "VK_ICD_FILENAMES"}[fault]
+        b.os.environ[key] = "unreviewed-change"
+    before = dict(b.os.environ)
+    with pytest.raises(b.BootstrapError, match="process environment"):
+        b._live_environment(plan, "simulator", phase="after_benchmark_import")
+    assert dict(b.os.environ) == before
+
+
+@pytest.mark.parametrize("fault", ["policy", "extra_key", "missing_key", "not_mapping", "not_string",
+                                  "relative_package", "wrong_log_level", "discard_launch_path",
+                                  "relative_library", "multiple_libraries", "empty_library"])
+def test_invalid_import_transition_is_rejected_even_before_import(plan, fault):
+    profile = declare_simulator_import_environment(plan)
+    post = profile["post_import_process_environment"]
+    role = "simulator"
+    if fault == "policy":
+        role = "policy"
+    elif fault == "extra_key":
+        post["CUDA_VISIBLE_DEVICES"] = GPU
+    elif fault == "missing_key":
+        del post["SAPIEN_PACKAGE_PATH"]
+    elif fault == "not_mapping":
+        profile["post_import_process_environment"] = []
+    elif fault == "not_string":
+        post["TF_CPP_MIN_LOG_LEVEL"] = 3
+    elif fault == "relative_package":
+        post["SAPIEN_PACKAGE_PATH"] = "relative/sapien"
+    elif fault == "wrong_log_level":
+        post["TF_CPP_MIN_LOG_LEVEL"] = "1"
+    else:
+        post["LD_LIBRARY_PATH"] = {
+            "discard_launch_path": "/elsewhere/lib",
+            "relative_library": "relative/lib:/recorded/graphics:/recorded/other",
+            "multiple_libraries": "/first:/second:/recorded/graphics:/recorded/other",
+            "empty_library": ":/recorded/graphics:/recorded/other",
+        }[fault]
+    with pytest.raises(b.BootstrapError):
+        b._expected_process_environment(profile, role)
+
+
+def test_unknown_environment_phase_rejected(plan):
+    profile = declare_simulator_import_environment(plan)
+    with pytest.raises(b.BootstrapError, match="Unknown"):
+        b._expected_process_environment(profile, "simulator", phase="whatever_is_live")
+    with pytest.raises(b.BootstrapError, match="Only the simulator"):
+        b._expected_process_environment(plan.environment["roles"]["policy"], "policy", phase="after_benchmark_import")
+
+
+def test_import_transition_record_validated_by_launch_contract(tmp_path, monkeypatch, plan):
+    from tests.uniform_keyframe_expansion.test_launch_contract import Fixture
+    from experiments.uniform_keyframe_expansion import launch_contract as lc
+
+    fixture = Fixture(tmp_path, monkeypatch)
+    profile = declare_simulator_import_environment(plan)
+    fixture.environment["roles"]["simulator"].update({
+        "process_environment": profile["process_environment"],
+        "post_import_process_environment": profile["post_import_process_environment"],
+    })
+    ref = fixture.write("recorded-import-environment.json", fixture.environment)
+    # The pre-GPU CPU schema gate has no selected GPU yet in this fixture.
+    assert lc._environment(ref, "cpu-fixture", None)["roles"]["simulator"] == fixture.environment["roles"]["simulator"]
+    fixture.environment["roles"]["simulator"]["post_import_process_environment"]["JAX_PLATFORMS"] = "cpu"
+    ref = fixture.write("invalid-import-environment.json", fixture.environment)
+    with pytest.raises(lc.ExpansionLaunchError, match="import-environment"):
+        lc._environment(ref, "cpu-fixture", None)
+
+
 @pytest.mark.parametrize("fault", [None, "missing", "duplicate", "name", "exclusive"])
 def test_selected_physical_gpu_must_match_live_inventory(plan, monkeypatch, fault):
     line = f"{GPU}, 00000000:01:00.0, FixtureGPU, 999, Default"
@@ -291,10 +398,15 @@ def test_production_factory_preserves_original_resolver_and_physical_renderer(pl
     utils = SimpleNamespace(TASK_NAME_LIST=list(FORMAL_TASKS), TASK_WITH_VIDEO_DEMO=["InsertPeg"],
                             EpisodeState=original_state, pack_buffer=original_pack, RolloutRecorder=original_recorder)
     monkeypatch.setattr(b, "_preflight", lambda p, r: (p, {"live": True}))
-    monkeypatch.setattr(b, "_live_environment", lambda p, r: {})
+    environment_phases = []
+    def environment(p, r, *, phase="startup"):
+        environment_phases.append(phase)
+        return {"phase": phase}
+    monkeypatch.setattr(b, "_live_environment", environment)
     monkeypatch.setattr(b, "_benchmark_modules", lambda p: (utils, OriginalRunner))
     monkeypatch.setattr(serving, "ExpansionClient", lambda *args, **kwargs: (args, kwargs))
     runtime = b.prepare_benchmark_runtime(plan, policy_port=12000)
+    assert runtime.provenance["benchmark_import_environment"] == {"phase": "after_benchmark_import"}
     assert runtime.components.episode_state is original_state
     assert runtime.components.pack_buffer is original_pack
     assert runtime.components.recorder is original_recorder
@@ -311,6 +423,7 @@ def test_production_factory_preserves_original_resolver_and_physical_renderer(pl
         runtime.env_factory("BinFill", Path("/unused"), max_steps=64, dataset="test", require_current_task_index=True)
     args, kwargs = runtime.client_factory()
     assert args == ("127.0.0.1", 12000) and kwargs == {"expected_execution_identity": IDENTITY}
+    assert environment_phases == ["after_benchmark_import"] * 5
 
 
 @pytest.mark.parametrize("fault", [None, "cpu", "other_physical", "no_process", "load_error", "wrong_checkpoint"])

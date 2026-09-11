@@ -152,6 +152,14 @@ def _environment(ref, host, gpu_uuid):
             raise ExpansionLaunchError("Process environment must be an explicit string mapping")
         if gpu_uuid is not None:
             _same(variables.get("CUDA_VISIBLE_DEVICES"), gpu_uuid, f"{role} physical GPU mapping")
+        # Imports may perform a small, explicitly recorded simulator-only
+        # transition. Validate it before any launch; the worker checks its exact
+        # post-import values. It is never applied to a child's startup env.
+        from experiments.uniform_keyframe_expansion.server_bootstrap import BootstrapError, _expected_process_environment
+        try:
+            _expected_process_environment(profile, role)
+        except BootstrapError as error:
+            raise ExpansionLaunchError(str(error)) from error
         prefix = profile.get("command_prefix")
         if not isinstance(prefix, list) or any(not isinstance(part, str) or not part for part in prefix):
             raise ExpansionLaunchError("command_prefix must be an argv list, possibly empty")

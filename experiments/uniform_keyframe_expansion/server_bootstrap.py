@@ -76,7 +76,39 @@ def _live_repository(source: Mapping, *, role: str) -> dict:
     return {"root": str(root), "revision": revision, "branch": branch, "clean": True}
 
 
-def _live_environment(plan, role: str) -> dict:
+def _expected_process_environment(profile: Mapping, role: str, *, phase: str = "startup") -> dict:
+    """Validate a pre-recorded import transition, never learn one from live env.
+
+    OpenCV prepends its library directory, SAPIEN records its package directory,
+    and the original benchmark sets its logging level on import. Bind these
+    exact values in the hashed runtime manifest separately from the process's
+    launch environment. No CUDA/numerical/renderer override is accepted here.
+    """
+    if phase not in {"startup", "after_benchmark_import"}:
+        raise BootstrapError("Unknown process-environment phase")
+    declared = dict(profile["process_environment"])
+    post = profile.get("post_import_process_environment")
+    if post is not None:
+        keys = {"LD_LIBRARY_PATH", "SAPIEN_PACKAGE_PATH", "TF_CPP_MIN_LOG_LEVEL"}
+        if (role != "simulator" or not isinstance(post, Mapping) or set(post) != keys
+                or any(not isinstance(value, str) or not value for value in post.values())):
+            raise BootstrapError("Invalid simulator import-environment declaration")
+        if post["TF_CPP_MIN_LOG_LEVEL"] != "3" or not Path(post["SAPIEN_PACKAGE_PATH"]).is_absolute():
+            raise BootstrapError("Invalid benchmark logging/package import values")
+        original = declared.get("LD_LIBRARY_PATH")
+        if not original or not post["LD_LIBRARY_PATH"].endswith(":" + original):
+            raise BootstrapError("Import library path must preserve the complete launch path")
+        added = post["LD_LIBRARY_PATH"][:-(len(original) + 1)]
+        if ":" in added or not Path(added).is_absolute():
+            raise BootstrapError("Import may only prepend one recorded absolute library directory")
+    if phase == "after_benchmark_import":
+        if role != "simulator":
+            raise BootstrapError("Only the simulator has a benchmark-import phase")
+        declared.update(post or {})
+    return declared
+
+
+def _live_environment(plan, role: str, *, phase: str = "startup") -> dict:
     report = plan.environment
     expected = report["roles"][role]
     if sys.platform != "linux" or socket.gethostname() != report["host"]:
@@ -84,7 +116,7 @@ def _live_environment(plan, role: str) -> dict:
     if (Path(sys.executable).absolute() != Path(expected["python_executable"]).absolute()
             or platform.python_version() != expected["python_version"]):
         raise BootstrapError(f"Wrong {role} Python executable/version")
-    declared = expected["process_environment"]
+    declared = _expected_process_environment(expected, role, phase=phase)
     if not {"CUDA_VISIBLE_DEVICES", "PYTHONPATH"}.issubset(declared):
         raise BootstrapError("Environment evidence must bind CUDA visibility and Python paths")
     if declared["CUDA_VISIBLE_DEVICES"] != plan.gpu_uuid:
@@ -102,7 +134,7 @@ def _live_environment(plan, role: str) -> dict:
     for name, version in packages.items():
         if importlib.metadata.version(name) != version:
             raise BootstrapError(f"Live package version differs: {name}")
-    return {"role": role, "host": socket.gethostname(), "python_executable": str(Path(sys.executable).absolute()),
+    return {"role": role, "phase": phase, "host": socket.gethostname(), "python_executable": str(Path(sys.executable).absolute()),
             "python_binary_resolved": str(Path(sys.executable).resolve()),
             "python_version": platform.python_version(), "packages": dict(packages),
             "process_environment": dict(declared)}
@@ -242,6 +274,7 @@ def prepare_benchmark_runtime(plan, *, policy_port: int, policy_host: str = "127
     if policy_host != "127.0.0.1" or type(policy_port) is not int or not 1 <= policy_port <= 65535:
         raise BootstrapError("The resident policy endpoint must be explicit loopback")
     utils, runner = _benchmark_modules(plan)
+    provenance["benchmark_import_environment"] = _live_environment(plan, "simulator", phase="after_benchmark_import")
     from experiments.uniform_keyframe_expansion.contract import FORMAL_TASKS
     from experiments.uniform_keyframe_expansion.evaluator import BenchmarkComponents
     from experiments.uniform_keyframe_expansion.serving import ExpansionClient
@@ -265,7 +298,7 @@ def prepare_benchmark_runtime(plan, *, policy_port: int, policy_host: str = "127
                 raise BootstrapError("Original EnvRunner did not verify the physical renderer device")
 
     def env_factory(task, directory, *, max_steps, dataset, require_current_task_index):
-        _live_environment(plan, "simulator")
+        _live_environment(plan, "simulator", phase="after_benchmark_import")
         if (require_current_task_index is not True or type(max_steps) is not int
                 or not any((task, dataset, max_steps) == entry[:3] for entry in allowed)):
             raise BootstrapError("Environment request differs from the authorized row population")
@@ -276,7 +309,7 @@ def prepare_benchmark_runtime(plan, *, policy_port: int, policy_host: str = "127
         return result
 
     def client_factory():
-        _live_environment(plan, "simulator")
+        _live_environment(plan, "simulator", phase="after_benchmark_import")
         return ExpansionClient(policy_host, policy_port, expected_execution_identity=plan.execution_identity)
 
     return RuntimeBindings(BenchmarkComponents(utils.EpisodeState, utils.pack_buffer, utils.RolloutRecorder,
