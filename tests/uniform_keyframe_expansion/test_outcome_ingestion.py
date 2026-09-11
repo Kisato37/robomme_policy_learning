@@ -1,7 +1,7 @@
 """CPU tests: full-census mapping fixtures plus real-store rejection checks.
 
 The in-memory store below stubs *already audited* closures only to exercise all
-1,600 normalized records/pairs cheaply. It is not evidence that a synthetic
+2,400 normalized records/triples cheaply. It is not evidence that a synthetic
 completion is an actual GPU result. Real-store tests separately verify that
 ingestion delegates corrupted/missing/duplicate evidence to the artifact audit.
 """
@@ -20,7 +20,6 @@ from experiments.keyframe_oracle_sampling.artifacts import SMOKE_INITIAL_CONDITI
 from experiments.uniform_keyframe_expansion import contract as c
 from experiments.uniform_keyframe_expansion import outcome_ingestion as oi
 from experiments.uniform_keyframe_expansion.analysis import validate_outcome_records
-from experiments.uniform_keyframe_expansion.artifacts import ExpansionArtifactError, ExpansionRunStore
 
 _spec = importlib.util.spec_from_file_location("expansion_ingestion_artifact_fixtures", Path(__file__).with_name("test_artifacts.py"))
 _artifact_fixtures = importlib.util.module_from_spec(_spec)
@@ -128,16 +127,15 @@ def census(tmp_path, monkeypatch):
     return fixture
 
 
-def test_full_new_arm_census_yields_bound_sources_and_only_initial_pairing(census):
+def test_full_three_arm_census_yields_bound_sources_and_only_initial_pairing(census):
     before = deepcopy(census.files)
     output = oi.ingest_formal_run(census.run_root)
-    assert len(output["records"]) == len(output["sources"]) == output["new_arm_cell_count"] == 1600
-    assert {row["arm"] for row in output["records"]} == {"UK48", "UN48"}
+    assert len(output["records"]) == len(output["sources"]) == output["study_cell_count"] == 2400
+    assert {row["arm"] for row in output["records"]} == {"U", "UK48", "UN48"}
     assert {row["terminal_status"] for row in output["records"]} == {"success", "fail", "timeout", "error"}
     assert all(row["success"] is (row["terminal_status"] == "success") for row in output["records"])
-    assert output["pairing_audit"]["pair_count"] == 800
-    assert output["pairing_audit"]["all_pairs_matched"] is True
-    assert output["pairing_audit"]["does_not_attest_U_baseline"] is True
+    assert output["pairing_audit"]["paired_block_count"] == 800
+    assert output["pairing_audit"]["all_three_arm_blocks_matched"] is True
     assert output["formal_statistics_executed"] is False
     assert "baseline_attestation" not in output
     assert census.audited == [(row["row_id"], 0) for row in census.rows]
@@ -150,12 +148,9 @@ def test_full_new_arm_census_yields_bound_sources_and_only_initial_pairing(censu
     assert output["normalized_records_sha256"] == c.canonical_sha256(output["records"])
     assert output["sources_sha256"] == c.canonical_sha256(output["sources"])
     assert output["pairing_audit_sha256"] == c.canonical_sha256(output["pairing_audit"])
-    # Schema compatibility only. These explicitly synthetic U rows are NOT an
+    # Schema compatibility only. These synthetic rows do not constitute an
     # attestation and do not invoke any statistical or formal result function.
-    fixture_u = [{**record, "arm": "U"} for record in output["records"] if record["arm"] == "UK48"]
-    assert validate_outcome_records([*output["records"], *fixture_u]).cell_count == 2400
-    with pytest.raises(ValueError, match="2400-cell"):
-        validate_outcome_records(output["records"])
+    assert validate_outcome_records(output["records"]).cell_count == 2400
 
 
 @pytest.mark.parametrize("field", SMOKE_INITIAL_CONDITION_HASH_FIELDS)
@@ -165,7 +160,7 @@ def test_each_initial_hash_mismatch_rejects_the_entire_census(census, field):
         if field == "front_observations_sha256":
             initial["reset_evidence"]["reset_prefix_frames_sha256"] = "f" * 64
     census.change_initial(1, mutate)
-    with pytest.raises(oi.ExpansionIngestionError, match="UK48/UN48 BinFill episode 0 initial_condition_hashes"):
+    with pytest.raises(oi.ExpansionIngestionError, match="U/UK48 BinFill episode 0 initial_condition_hashes"):
         oi.ingest_formal_run(census.run_root)
 
 
@@ -194,7 +189,7 @@ def test_reset_prefix_pairing_mismatch_rejected(census, mutation):
         else:
             initial["reset_prefix_boundary_indices"] = [0, 18, 35]
     census.change_initial(1, change)
-    with pytest.raises(oi.ExpansionIngestionError, match="UK48/UN48 BinFill episode 0 reset_"):
+    with pytest.raises(oi.ExpansionIngestionError, match="U/UK48 BinFill episode 0 reset_"):
         oi.ingest_formal_run(census.run_root)
 
 
@@ -209,9 +204,9 @@ def test_invalid_policy_reset_rejected_even_if_both_arms_agree(census, field, va
 @pytest.mark.parametrize("mutation", ["missing", "extra", "duplicate_source", "wrong_path", "wrong_row", "noncomplete"])
 def test_exact_census_source_and_completion_identity_required(census, mutation):
     if mutation == "missing":
-        census.completed.pop(1599)
+        census.completed.pop(2399)
     elif mutation == "extra":
-        census.completed[1600] = census.completed[0]
+        census.completed[2400] = census.completed[0]
     elif mutation == "duplicate_source":
         census.completed[1] = census.completed[0]
     elif mutation == "wrong_path":
@@ -272,7 +267,7 @@ def test_real_smoke_store_is_never_a_formal_source(tmp_path):
 def test_real_formal_empty_store_is_rejected_without_source_writes(tmp_path):
     store = _artifact_fixtures.create_store(tmp_path, stage="formal")
     before = {path: path.read_bytes() for path in store.run_root.rglob("*") if path.is_file()}
-    with pytest.raises(oi.ExpansionIngestionError, match="1600-cell"):
+    with pytest.raises(oi.ExpansionIngestionError, match="2400-cell"):
         oi.ingest_formal_run(store.run_root)
     assert before == {path: path.read_bytes() for path in store.run_root.rglob("*") if path.is_file()}
 

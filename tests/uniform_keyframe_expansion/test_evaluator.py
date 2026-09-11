@@ -15,7 +15,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from experiments.uniform_keyframe_expansion.contract import build_smoke_matrix
+from experiments.uniform_keyframe_expansion.contract import (
+    EXPANDED_POLICY_VARIANT, U_POLICY_VARIANT, build_smoke_matrix,
+)
 from experiments.uniform_keyframe_expansion.evaluator import (
     BenchmarkComponents, ExpansionEvaluationError, encode_task_state, evaluate_attempt, validate_reset_prefix, _classify_failure,
 )
@@ -170,8 +172,9 @@ class Environment:
 
 
 class Client:
-    def __init__(self, fault=None):
+    def __init__(self, fault=None, *, policy_variant=EXPANDED_POLICY_VARIANT):
         self.fault = fault
+        self.policy_variant = policy_variant
         self.segments = []
         self.stages = []
         self.call = 0
@@ -179,11 +182,14 @@ class Client:
 
     def get_server_metadata(self):
         _, evidence = expanded_history_mapping(RELEASED_HISTORY_CONFIG)
+        is_u = self.policy_variant == U_POLICY_VARIANT
         metadata = {"wire_schema": 1, "experiment_family": "uniform_keyframe_expansion-v1",
-                    "effective_memory_budget": 768, "evaluation_policy_seed": 7,
+                    "policy_variant": self.policy_variant,
+                    "effective_memory_budget": 512 if is_u else 768, "evaluation_policy_seed": 7,
                     "resident_policy": True, "strict_weight_tree_load": True, "model_process_pid": 123,
                     "source_history_config_sha256": evidence["source_history_config_sha256"],
-                    "effective_history_config_sha256": evidence["effective_history_config_sha256"],
+                    "effective_history_config_sha256": (payload_digest(RELEASED_HISTORY_CONFIG)
+                                                         if is_u else evidence["effective_history_config_sha256"]),
                     "direct_execution": deepcopy(EXECUTION_IDENTITY)}
         if self.fault == "wrong_server":
             metadata["direct_execution"]["dispatch_sha256"] = "b" * 64
@@ -234,14 +240,16 @@ class Client:
 def run_case(tmp_path, *, row_id=0, prefix_length=3, stop_at=18, status="success", env_fault=None, client_fault=None, stage_period=10):
     store = Store(tmp_path)
     env_holder = []
-    client = Client(client_fault)
+    row = build_smoke_matrix()["rows"][row_id]
+    client = Client(client_fault, policy_variant=(U_POLICY_VARIANT if row["arm"] == "U"
+                                                  else EXPANDED_POLICY_VARIANT))
     def factory(*args, **kwargs):
         env = Environment(*args, **kwargs, prefix_length=prefix_length, stop_at=stop_at, status=status, fault=env_fault, stage_period=stage_period)
         env_holder.append(env)
         return env
     components = BenchmarkComponents(utils.EpisodeState, utils.pack_buffer, Recorder, tuple(utils.TASK_WITH_VIDEO_DEMO))
     def run():
-        return evaluate_attempt(store, build_smoke_matrix()["rows"][row_id], 0,
+        return evaluate_attempt(store, row, 0,
                                 env_factory=factory, client_factory=lambda: client, components=components,
                                 episode_provenance={"policy_execution_identity": deepcopy(EXECUTION_IDENTITY)})
     return run, store, env_holder, client
@@ -282,7 +290,7 @@ def test_early_official_terminal_preserved_and_never_stepped_past(tmp_path, stat
     (0, "timeout", 1, "timeout", 1),
     (1, "error", 1, "error", 1),
     (0, "success", 10000, "short_limit", 64),
-    (2, "success", 10000, "timeout", 1300),
+    (3, "success", 10000, "timeout", 1300),
 ])
 def test_original_benchmark_boolean_tensor_contract(
         tmp_path, monkeypatch, row_id, status, stop_at, expected, steps):
@@ -331,7 +339,7 @@ def test_malformed_stop_flag_remains_hard_stop(tmp_path, monkeypatch, invalid):
     assert envs[0].steps == 1 and envs[0].closed and client.closed
 
 
-@pytest.mark.parametrize(("row_id", "expected", "steps", "calls"), [(0, "short_limit", 64, 4), (2, "timeout", 1300, 82)])
+@pytest.mark.parametrize(("row_id", "expected", "steps", "calls"), [(0, "short_limit", 64, 4), (3, "timeout", 1300, 82)])
 def test_exact_short_and_full_limit_without_extra_step(tmp_path, row_id, expected, steps, calls):
     # Sparse stage changes avoid intentionally unsupported dense boundary unions.
     run, store, envs, client = run_case(tmp_path, row_id=row_id, stop_at=10000, stage_period=100000)
@@ -423,7 +431,7 @@ def test_filesystem_failure_after_known_terminal_never_allows_scientific_retry(t
     assert envs[0].steps == 1 and envs[0].closed and client.closed
 
 
-@pytest.mark.parametrize(("row_id", "terminal"), [(0, "short_limit"), (2, "timeout")])
+@pytest.mark.parametrize(("row_id", "terminal"), [(0, "short_limit"), (3, "timeout")])
 def test_recording_failure_at_horizon_limit_is_not_retryable(tmp_path, monkeypatch, row_id, terminal):
     run, store, envs, _ = run_case(tmp_path, row_id=row_id, stop_at=10000, stage_period=100000)
     def broken(*args):

@@ -276,11 +276,14 @@ def prepare_benchmark_runtime(plan, *, policy_port: int, policy_host: str = "127
     utils, runner = _benchmark_modules(plan)
     provenance["benchmark_import_environment"] = _live_environment(plan, "simulator", phase="after_benchmark_import")
     from experiments.uniform_keyframe_expansion.contract import FORMAL_TASKS
+    from experiments.uniform_keyframe_expansion.contract import policy_variant_for_rows
     from experiments.uniform_keyframe_expansion.evaluator import BenchmarkComponents
     from experiments.uniform_keyframe_expansion.serving import ExpansionClient
 
     if tuple(utils.TASK_NAME_LIST) != tuple(FORMAL_TASKS):
         raise BootstrapError("Original task registry differs from the frozen population")
+    policy_variant = policy_variant_for_rows(plan.rows)
+    provenance["policy_variant"] = policy_variant
     allowed = {(r["task"], r["dataset"], r["max_steps"], r["episode_id"]) for r in plan.rows}
 
     class BoundEnvRunner(runner):
@@ -310,7 +313,11 @@ def prepare_benchmark_runtime(plan, *, policy_port: int, policy_host: str = "127
 
     def client_factory():
         _live_environment(plan, "simulator", phase="after_benchmark_import")
-        return ExpansionClient(policy_host, policy_port, expected_execution_identity=plan.execution_identity)
+        return ExpansionClient(
+            policy_host, policy_port,
+            expected_execution_identity=plan.execution_identity,
+            expected_policy_variant=policy_variant,
+        )
 
     return RuntimeBindings(BenchmarkComponents(utils.EpisodeState, utils.pack_buffer, utils.RolloutRecorder,
                                               tuple(utils.TASK_WITH_VIDEO_DEMO)),
@@ -346,8 +353,13 @@ def load_authorized_policy(plan) -> LoadedPolicy:
     devices = jax.devices()
     if len(devices) != 1 or devices[0].platform != "gpu" or devices[0].local_hardware_id != 0:
         raise BootstrapError("Policy backend is not the single declared CUDA device")
-    from experiments.uniform_keyframe_expansion.serving import load_expansion_policy
+    from experiments.uniform_keyframe_expansion.contract import policy_variant_for_rows
+    from experiments.uniform_keyframe_expansion.serving import load_study_policy
 
-    policy = load_expansion_policy(plan.checkpoint_dir)
+    policy_variant = policy_variant_for_rows(
+        plan.rows, allow_empty_architecture=plan.stage == "architecture_smoke",
+    )
+    policy = load_study_policy(plan.checkpoint_dir, policy_variant)
+    provenance["policy_variant"] = policy_variant
     provenance.update(_loaded_model_gpu(plan, jax))
     return LoadedPolicy(policy, provenance)

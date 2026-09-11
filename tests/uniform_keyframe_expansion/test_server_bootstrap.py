@@ -11,7 +11,9 @@ import sys
 import pytest
 
 from experiments.uniform_keyframe_expansion import server_bootstrap as b
-from experiments.uniform_keyframe_expansion.contract import FORMAL_TASKS, build_smoke_matrix
+from experiments.uniform_keyframe_expansion.contract import (
+    EXPANDED_POLICY_VARIANT, FORMAL_TASKS, build_smoke_matrix,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,7 +30,9 @@ class FixturePlan:
         self.gpu_uuid = GPU
         self.checkpoint_dir = ROOT / "not-a-real-checkpoint/79999"
         self.execution_identity = deepcopy(IDENTITY)
-        self.rows = tuple(build_smoke_matrix()["rows"][:3])
+        # One resident process has one static memory shape.  This fixture uses
+        # the homogeneous expanded pair; U has its own 512-token process.
+        self.rows = tuple(build_smoke_matrix()["rows"][1:3])
         self.policy_source = {"root": str(ROOT), "revision": "a" * 40, "branch": "exp/fixture"}
         self.benchmark_source = {"root": str(self.benchmark_root), "revision": "b" * 40, "branch": "HEAD"}
         self.revalidations = []
@@ -422,7 +426,10 @@ def test_production_factory_preserves_original_resolver_and_physical_renderer(pl
     with pytest.raises(b.BootstrapError):
         runtime.env_factory("BinFill", Path("/unused"), max_steps=64, dataset="test", require_current_task_index=True)
     args, kwargs = runtime.client_factory()
-    assert args == ("127.0.0.1", 12000) and kwargs == {"expected_execution_identity": IDENTITY}
+    assert args == ("127.0.0.1", 12000) and kwargs == {
+        "expected_execution_identity": IDENTITY,
+        "expected_policy_variant": EXPANDED_POLICY_VARIANT,
+    }
     assert environment_phases == ["after_benchmark_import"] * 5
 
 
@@ -437,12 +444,12 @@ def test_model_only_strict_new_loader_then_real_pid_device_check(plan, monkeypat
     monkeypatch.setattr(b.importlib, "import_module", lambda _: fake_jax)
     model = object()
     calls = []
-    def load(path):
-        calls.append(path)
+    def load(path, policy_variant):
+        calls.append((path, policy_variant))
         if fault == "load_error":
             raise RuntimeError("strict checkpoint shape mismatch")
         return model
-    monkeypatch.setattr(serving, "load_expansion_policy", load)
+    monkeypatch.setattr(serving, "load_study_policy", load)
     monkeypatch.setattr(b.os, "getpid", lambda: 123)
     query = "123, " + ("GPU-other" if fault == "other_physical" else GPU)
     monkeypatch.setattr(b, "_command", lambda _: "" if fault == "no_process" else query)
@@ -455,4 +462,5 @@ def test_model_only_strict_new_loader_then_real_pid_device_check(plan, monkeypat
         loaded = b.load_authorized_policy(plan)
         assert loaded.policy is model
         assert loaded.provenance["model_gpu_uuid"] == GPU
+        assert calls == [(plan.checkpoint_dir, EXPANDED_POLICY_VARIANT)]
     assert len(calls) == (0 if fault in {"cpu", "wrong_checkpoint"} else 1)

@@ -1,10 +1,9 @@
-"""Read-only ingestion of audited UK48/UN48 formal artifacts.
+"""Read-only ingestion of the audited same-run U/UK48/UN48 formal artifacts.
 
-This is not the U-baseline attestation and does not run statistics.  The returned
-``records`` have analysis.py's normalized schema, but contain only the 1,600 new
-arm cells.  An independently audited and aligned 800-cell U baseline is still
-required before the three-arm analysis can run.  Internal artifact checks cannot
-authenticate external checkpoint, software, or environment provenance claims.
+The returned ``records`` contain the exact 2,400-cell census. Initial conditions
+are compared within every task/episode triple before any statistics may run.
+Internal artifact checks still cannot authenticate external checkpoint, software,
+or environment provenance claims beyond the launch evidence bound to the run.
 """
 
 from __future__ import annotations
@@ -129,10 +128,10 @@ def _normalize_result(result: Mapping[str, Any], row: Mapping[str, Any]) -> dict
 
 
 def ingest_formal_run(run_root: str | Path) -> dict[str, Any]:
-    """Audit the entire frozen new-arm census, then return records and provenance.
+    """Audit the entire frozen three-arm census, then return records and provenance.
 
-    No partial/fixture mode, exclusions, generated defaults, file writes or U
-    records are supported.  ``completed_rows`` enforces immutable attempts and
+    No partial/fixture mode, exclusions, generated defaults, or file writes are
+    supported. ``completed_rows`` enforces immutable attempts and
     first scientific completion, including prior infrastructure retry evidence.
     Each selected attempt is re-audited before ingestion, not merely trusted
     because a completion ledger or a result file happens to exist.
@@ -149,7 +148,7 @@ def ingest_formal_run(run_root: str | Path) -> dict[str, Any]:
     if (not isinstance(completed, Mapping) or any(type(key) is not int for key in completed)
             or set(completed) != expected_ids):
         observed = len(completed) if isinstance(completed, Mapping) else "invalid"
-        raise ExpansionIngestionError(f"Exact 1600-cell new-arm census required; completed={observed}")
+        raise ExpansionIngestionError(f"Exact 2400-cell three-arm census required; completed={observed}")
     if len({str(path) for path in completed.values()}) != len(rows):
         raise ExpansionIngestionError("Duplicate source result paths")
     ledger_path = store.run_root / "completions/completion_ledger.jsonl"
@@ -194,18 +193,21 @@ def ingest_formal_run(run_root: str | Path) -> dict[str, Any]:
             "artifact_sha256": dict(bound_hashes),
         })
     pair_records = []
-    for index in range(0, len(rows), 2):
-        uk, un = rows[index:index + 2]
-        left = signatures[(uk["task"], uk["episode_id"], "UK48")]
-        right = signatures[(un["task"], un["episode_id"], "UN48")]
+    for index in range(0, len(rows), 3):
+        u, uk, un = rows[index:index + 3]
+        reference = signatures[(u["task"], u["episode_id"], "U")]
         # Compare initial evidence only. Later histories, boundaries, counts and
         # terminal outcomes can legitimately diverge in closed-loop execution.
-        for field in left:
-            _equal(left[field], right[field], f"UK48/UN48 {uk['task']} episode {uk['episode_id']} {field}")
+        for arm in ("UK48", "UN48"):
+            observed = signatures[(u["task"], u["episode_id"], arm)]
+            for field in reference:
+                _equal(reference[field], observed[field],
+                       f"U/{arm} {u['task']} episode {u['episode_id']} {field}")
         pair_records.append({
-            "task": uk["task"], "episode_id": uk["episode_id"],
-            "source_row_ids": [uk["row_id"], un["row_id"]], "status": "matched",
-            "matched_initial_evidence": left,
+            "task": u["task"], "episode_id": u["episode_id"],
+            "source_row_ids": [u["row_id"], uk["row_id"], un["row_id"]],
+            "arms": list(c.FORMAL_ARMS), "status": "matched",
+            "matched_initial_evidence": reference,
         })
     # Abort rather than publish a mixed-time snapshot if run evidence changes.
     _equal(_sha256(manifest_path), manifest_sha, "run manifest changed during ingestion")
@@ -213,9 +215,8 @@ def ingest_formal_run(run_root: str | Path) -> dict[str, Any]:
     for relative, digest in store.manifest["snapshot_sha256"].items():
         _equal(_sha256(store.run_root / relative), digest, f"run snapshot changed: {relative}")
     pairing = {
-        "scope": "UK48_UN48_initial_pairing_only", "pair_count": len(pair_records),
-        "all_pairs_matched": True, "records": pair_records,
-        "does_not_attest_U_baseline": True,
+        "scope": "same_run_U_UK48_UN48_initial_pairing", "paired_block_count": len(pair_records),
+        "all_three_arm_blocks_matched": True, "records": pair_records,
     }
     return {
         "schema_version": 1, "protocol_family": c.PROTOCOL_FAMILY,
@@ -224,10 +225,10 @@ def ingest_formal_run(run_root: str | Path) -> dict[str, Any]:
         "run_manifest_path": str(manifest_path), "run_manifest_sha256": manifest_sha,
         "run_provenance": store.manifest["provenance"],
         "completion_ledger_sha256": ledger_sha, "run_snapshot_sha256": store.manifest["snapshot_sha256"],
-        "new_arm_cell_count": len(records), "records": records, "sources": sources,
+        "study_cell_count": len(records), "records": records, "sources": sources,
         "normalized_records_sha256": c.canonical_sha256(records),
         "sources_sha256": c.canonical_sha256(sources),
         "pairing_audit": pairing, "pairing_audit_sha256": c.canonical_sha256(pairing),
-        "baseline_scope": "U not ingested or attested; separately audited 800 U records still required",
+        "comparison_scope": "same-run Lighthouse U/UK48/UN48 with matched initial conditions",
         "formal_statistics_executed": False,
     }

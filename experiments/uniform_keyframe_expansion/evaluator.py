@@ -19,7 +19,9 @@ from typing import Any, Callable
 
 import numpy as np
 
-from experiments.uniform_keyframe_expansion.contract import build_selector_config, validate_row
+from experiments.uniform_keyframe_expansion.contract import (
+    build_selector_config, policy_variant_for_arm, validate_row,
+)
 from experiments.uniform_keyframe_expansion.trace_validation import validate_selector_trace
 
 
@@ -126,7 +128,9 @@ def encode_task_state(value: Any) -> Any:
 def _record_initial(writer, env, prefix, reset_reply, server_metadata, config, expected_identity) -> None:
     from experiments.uniform_keyframe_expansion.serving import validate_reset_response, validate_server_metadata
 
-    server_metadata = validate_server_metadata(server_metadata, expected_identity)
+    server_metadata = validate_server_metadata(
+        server_metadata, expected_identity, policy_variant_for_arm(config["arm"]),
+    )
     reset = validate_reset_response(reset_reply, config)
     if reset["model_process_pid"] != server_metadata["model_process_pid"]:
         raise ExpansionEvaluationError("Handshake and reset refer to different resident model processes")
@@ -236,7 +240,7 @@ def evaluate_attempt(store, row: dict, attempt_id: int, *, env_factory: Callable
         client = client_factory()
         metadata = client.get_server_metadata()
         from experiments.uniform_keyframe_expansion.serving import validate_server_metadata
-        validate_server_metadata(metadata, expected_identity)
+        validate_server_metadata(metadata, expected_identity, policy_variant_for_arm(row["arm"]))
         phase = "policy_reset"
         reset_reply = client.reset(config)
         phase = "initial_evidence"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import inspect
 
 import pytest
@@ -160,32 +159,32 @@ def test_beating_random_only_never_counts_as_primary_success():
 
 
 def _attestation(table):
-    return {"status": "verified", "all_800_u_outcomes_audited": True,
+    return {"status": "verified", "all_2400_outcomes_audited": True,
             "initial_inputs_states_text_matched": True, "seed_difficulty_mapping_matched": True,
             "checkpoint_control_pipeline_matched": True, "execution_provenance_reviewed": True,
-            "new_arm_pairing_verified": True, "baseline_source_run_id": "synthetic-only",
+            "same_run_three_arm_pairing_verified": True, "source_run_id": "synthetic-only",
             "comparison_audit_id": "synthetic-only", "raw_provenance_manifest_sha256": "a" * 64,
             "comparison_audit_sha256": "b" * 64, **a.outcome_binding_hashes(table)}
 
 
 @pytest.mark.parametrize("bad", [None, True, {"status": "verified"}])
-def test_formal_rejects_unverified_or_flag_only_baseline_before_statistics(bad, monkeypatch):
-    monkeypatch.setattr(a, "_effect", lambda *args: pytest.fail("Statistics ran before baseline gate"))
+def test_formal_rejects_unverified_or_flag_only_run_attestation_before_statistics(bad, monkeypatch):
+    monkeypatch.setattr(a, "_effect", lambda *args: pytest.fail("Statistics ran before run-attestation gate"))
     with pytest.raises(a.ExpansionAnalysisError):
-        a.analyze_matched_outcomes(_records(50), baseline_attestation=bad)
+        a.analyze_matched_outcomes(_records(50), run_attestation=bad)
 
 
 def test_attestation_must_bind_exact_outcomes_and_provenance():
     table = a.validate_outcome_records(_records(50))
     valid = _attestation(table)
-    assert a._validate_baseline_attestation(valid, table) == valid
+    assert a._validate_run_attestation(valid, table) == valid
     for field, value in (("u_outcomes_sha256", "f" * 64), ("all_outcomes_sha256", "f" * 64),
                          ("raw_provenance_manifest_sha256", None), ("comparison_audit_sha256", "PASS"),
-                         ("initial_inputs_states_text_matched", 1), ("baseline_source_run_id", "")):
+                         ("initial_inputs_states_text_matched", 1), ("source_run_id", "")):
         invalid = {**valid, field: value}
         with pytest.raises(a.ExpansionAnalysisError):
-            a._validate_baseline_attestation(invalid, table)
+            a._validate_run_attestation(invalid, table)
     changed = _records(50)
     changed[0]["success"] = not changed[0]["success"]
     with pytest.raises(a.ExpansionAnalysisError, match="bind"):
-        a._validate_baseline_attestation(valid, a.validate_outcome_records(changed))
+        a._validate_run_attestation(valid, a.validate_outcome_records(changed))

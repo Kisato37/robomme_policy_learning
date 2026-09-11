@@ -46,7 +46,7 @@ class BufferPolicy(FakePolicy):
         policy.mem_buffer = fixture_buffer()
         policy.step_idx = -1
         policy._keyframe_selector_config = None
-        policy.configure_uniform_keyframe_expansion(self.config)
+        policy.configure_uniform_keyframe_expansion(self.selector_config)
         policy.mem_buffer = fixture_buffer(len(self.stages), boundaries, real_dimensions=True)
         policy.step_idx = len(self.stages) - 1
         policy._selector_call_index = self.calls
@@ -59,13 +59,13 @@ class BufferPolicy(FakePolicy):
 
 
 @pytest.mark.parametrize("status", ["success", "fail", "timeout", "error"])
-def test_full_adapter_real_artifacts_cross_arm_residency_and_early_terminal(tmp_path, status):
+def test_full_adapter_real_artifacts_expanded_pair_residency_and_early_terminal(tmp_path, status):
     store = ExpansionRunStore.create(tmp_path / "uniform_keyframe_expansion" / f"cpu-{status}",
                                     stage="smoke", run_manifest=run_provenance())
     components = BenchmarkComponents(utils.EpisodeState, utils.pack_buffer, Recorder, tuple(utils.TASK_WITH_VIDEO_DEMO))
     with loopback(BufferPolicy()) as (policy, server, port):
         initial = []
-        for row in contract.build_smoke_matrix()["rows"][:2]:
+        for row in contract.build_smoke_matrix()["rows"][1:3]:
             def environment(*args, **kwargs):
                 return Environment(*args, **kwargs, prefix_length=43, stop_at=18, status=status)
             result = evaluate_attempt(
@@ -89,7 +89,7 @@ def test_full_adapter_real_artifacts_cross_arm_residency_and_early_terminal(tmp_
         assert policy.resets == 2  # Same resident object; different fresh episodes.
     report = store.completeness()
     assert report["completed_count"] == 2 and report["complete"] is False
-    assert report["expected_count"] == 48  # Two local fixtures never claim full smoke.
+    assert report["expected_count"] == 64  # Two local fixtures never claim full smoke.
 
 
 @pytest.mark.parametrize("status", ["success", "fail", "timeout", "error"])
@@ -100,7 +100,7 @@ def test_known_terminal_then_video_io_failure_blocks_real_store_retry(tmp_path, 
     def broken(*args):
         raise OSError(5, "fixture video EIO after terminal")
     monkeypatch.setattr(Recorder, "save_video", broken)
-    row, other = contract.build_smoke_matrix()["rows"][:2]
+    row, other = contract.build_smoke_matrix()["rows"][1:3]
     with loopback(BufferPolicy()) as (_, server, port):
         def environment(*args, **kwargs):
             return Environment(*args, **kwargs, prefix_length=43, stop_at=1, status=status)

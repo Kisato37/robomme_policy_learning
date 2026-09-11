@@ -17,7 +17,10 @@ import pytest
 from websockets.asyncio.server import serve
 from websockets.sync.client import connect
 
-from experiments.uniform_keyframe_expansion.contract import build_selector_config, build_smoke_matrix
+from experiments.uniform_keyframe_expansion.contract import (
+    EXPANDED_POLICY_VARIANT, U_POLICY_VARIANT, build_selector_config,
+    build_smoke_matrix,
+)
 from experiments.uniform_keyframe_expansion import serving
 from mme_vla_suite.shared.uniform_keyframe_config import (
     RELEASED_HISTORY_CONFIG, expanded_history_mapping,
@@ -35,18 +38,20 @@ def config(arm="UK48"):
 
 class FakePolicy:
     def __init__(self):
+        from omegaconf import OmegaConf
         self._seed = 7
         self.metadata = {"uniform_keyframe_expansion": expanded_history_mapping(RELEASED_HISTORY_CONFIG)[1]}
+        self.config = OmegaConf.create(RELEASED_HISTORY_CONFIG)
         self.resets = 0
         self.frames = []
-        self.config = None
+        self.selector_config = None
         self.failure = None
         self.bad_reset = False
 
     def reset(self):
         self.resets += 1
         self.frames = []
-        self.config = None
+        self.selector_config = None
 
     def reset_evidence(self):
         state = deepcopy(serving.RESET_STATE)
@@ -55,7 +60,10 @@ class FakePolicy:
         return state
 
     def configure_uniform_keyframe_expansion(self, value):
-        self.config = deepcopy(value)
+        self.selector_config = deepcopy(value)
+
+    def configure_keyframe_selector(self, value):
+        self.selector_config = deepcopy(value)
 
     def add_buffer(self, value):
         self.frames.append(value)
@@ -68,9 +76,10 @@ class FakePolicy:
 
 
 @contextmanager
-def loopback(policy=None):
+def loopback(policy=None, *, policy_variant=EXPANDED_POLICY_VARIANT):
     policy = policy or FakePolicy()
-    server = serving.ExpansionPolicyServer(policy, execution_identity=IDENTITY)
+    server = serving.ExpansionPolicyServer(policy, execution_identity=IDENTITY,
+                                           policy_variant=policy_variant)
     ready = queue.Queue()
     stop = threading.Event()
 
@@ -95,8 +104,9 @@ def loopback(policy=None):
         assert not thread.is_alive(), "Loopback fixture did not shut down"
 
 
-def client(port, **kwargs):
+def client(port, *, expected_policy_variant=EXPANDED_POLICY_VARIANT, **kwargs):
     return serving.ExpansionClient("127.0.0.1", port, expected_execution_identity=IDENTITY,
+                                   expected_policy_variant=expected_policy_variant,
                                    connect_timeout=2, response_timeout=2, **kwargs)
 
 
@@ -135,11 +145,24 @@ def test_real_loopback_reset_append_infer_and_cross_arm_new_connection():
                 response = remote.infer(observation())
                 np.testing.assert_array_equal(response["actions"], np.arange(160).reshape(20, 8))
                 np.testing.assert_array_equal(policy.frames[0]["current_task_index"], [0])
-                assert policy.config["arm"] == arm
+                assert policy.selector_config["arm"] == arm
                 metadata["effective_memory_budget"] = 512
                 assert remote.get_server_metadata()["effective_memory_budget"] == 768
             wait_released(server)
         assert policy.resets == 2
+
+
+def test_released_u_server_has_512_budget_and_translates_reset_without_expansion():
+    with loopback(policy_variant=U_POLICY_VARIANT) as (policy, server, port):
+        with client(port, expected_policy_variant=U_POLICY_VARIANT) as remote:
+            metadata = remote.get_server_metadata()
+            assert metadata["policy_variant"] == U_POLICY_VARIANT
+            assert metadata["effective_memory_budget"] == 512
+            remote.reset(config("U"))
+            assert policy.selector_config["arm"] == "U"
+            assert policy.selector_config["seed_table_dataset"] == "val"
+            assert len(policy.selector_config["random_seeds"]) == 82
+        wait_released(server)
 
 
 def test_readiness_connection_never_claims_episode_and_other_client_cannot_steal():
@@ -238,6 +261,7 @@ def test_client_local_lifecycle_and_bad_config_do_not_send_partial_requests():
 
 @pytest.mark.parametrize("field,value", [
     ("experiment_family", "keyframe_oracle_sampling"), ("wire_schema", True),
+    ("policy_variant", U_POLICY_VARIANT),
     ("effective_memory_budget", 512), ("evaluation_policy_seed", 42),
     ("resident_policy", False), ("strict_weight_tree_load", False),
     ("source_history_config_sha256", "b" * 64), ("effective_history_config_sha256", "b" * 64),
@@ -286,7 +310,8 @@ def test_loader_is_explicit_and_lazy_without_loading_actual_weights(monkeypatch,
     path = tmp_path / "79999"
     assert serving.load_expansion_policy(path) == "fake-policy"
     loader.assert_called_once_with(train_config, path, seed=7,
-                                   experimental_memory_expansion="uniform_keyframe_expansion-v1")
+                                   experimental_memory_expansion="uniform_keyframe_expansion-v1",
+                                   strict_weight_tree_load=True)
     with pytest.raises(ValueError, match="79999"):
         serving.load_expansion_policy(tmp_path / "wrong")
 

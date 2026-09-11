@@ -14,6 +14,10 @@ from experiments.uniform_keyframe_expansion.trace_validation import (
     ExpansionTraceError, validate_selector_trace, validate_trace_sequence,
 )
 from mme_vla_suite.shared.keyframe_oracle_sampling import official_uniform_indices
+from mme_vla_suite.shared.keyframe_oracle_sampling import (
+    FORMAL_SEED_SCOPE, SMOKE_SEED_SCOPE, derive_random_seed,
+    derive_smoke_random_seed,
+)
 from mme_vla_suite.shared.uniform_keyframe_config import payload_digest
 from mme_vla_suite.shared.uniform_keyframe_expansion import (
     SEED_FAMILY, derive_expansion_seed, select_expansion_indices,
@@ -35,44 +39,60 @@ def zero_array_hash(shape):
 
 def synthetic_trace(arm="UK48", step=63, boundaries=(0, 17, 35), call=0,
                     task="BinFill", split="test", episode=0, final=True):
-    selected, info = select_expansion_indices(
-        arm, step_idx=step, base_uniform_indices=official_uniform_indices(step),
-        boundary_flags=[index in boundaries for index in range(step + 1)], split=split,
-        task=task, episode_id=episode, policy_call_index=call,
-    )
-    mask = np.arange(768) < len(selected) * 16
-    seeds = [derive_expansion_seed(split, task, episode, index) for index in range(82)]
+    if arm == "U":
+        selected = official_uniform_indices(step)
+        derive = derive_random_seed if split == "test" else derive_smoke_random_seed
+        scope = FORMAL_SEED_SCOPE if split == "test" else SMOKE_SEED_SCOPE
+        seeds = [derive(task, episode, index) for index in range(82)]
+        info = {
+            "arm": "U", "split": split, "task": task, "episode_id": episode,
+            "policy_call_index": call, "step_idx": step, "selector_seed": None,
+            "visible_boundary_indices": list(boundaries),
+            "valid_frame_count": len(selected), "padding_frame_count": 32 - len(selected),
+        }
+        budget = 512
+    else:
+        selected, info = select_expansion_indices(
+            arm, step_idx=step, base_uniform_indices=official_uniform_indices(step),
+            boundary_flags=[index in boundaries for index in range(step + 1)], split=split,
+            task=task, episode_id=episode, policy_call_index=call,
+        )
+        seeds = [derive_expansion_seed(split, task, episode, index) for index in range(82)]
+        scope = SEED_FAMILY
+        budget = 768
+    mask = np.arange(budget) < len(selected) * 16
     trace = {
         **info, "schema_version": 1, "experiment_family": SEED_FAMILY,
-        "selector_name": arm, "seed_table_scope": SEED_FAMILY,
+        "selector_name": arm, "seed_table_scope": scope,
         "seed_table_dataset": split, "seed_table_sha256": payload_digest(seeds),
         "history_length": step + 1, "current_history_index": step,
         "selected_frame_indices": selected, "selected_indices_sha256": payload_digest(selected),
         "valid_memory_token_count": len(selected) * 16,
-        "mask_shape": [768], "mask_dtype": "bool", "mask_valid_prefix_all_true": True,
+        "mask_shape": [budget], "mask_dtype": "bool", "mask_valid_prefix_all_true": True,
         "mask_padding_all_false": True, "mask_sha256": array_hash(mask),
-        "prepared_memory_component_shapes": [[768, 2048], [768, 768], [768, 8], [768]],
+        "prepared_memory_component_shapes": [[budget, 2048], [budget, 768], [budget, 8], [budget]],
         "age_distribution": [step - index for index in selected],
         "maximum_temporal_gap": max((b - a for a, b in zip(selected, selected[1:])), default=0),
-        "boundary_recall": info["selected_boundary_count"] / len(boundaries),
-        "effective_memory_budget": 768, "base_uniform_token_budget": 512,
+        "boundary_recall": (len(set(selected) & set(boundaries)) / len(boundaries)
+                            if arm == "U" else info["selected_boundary_count"] / len(boundaries)),
+        "effective_memory_budget": budget, "base_uniform_token_budget": 512,
         "boundary_lookup_latency_ms": 1.0, "selector_decision_latency_ms": 2.0,
         "selector_bookkeeping_latency_ms": 3.0, "selector_latency_ms": 6.0,
     }
     for prefix, width in (("image", 2048), ("position", 768), ("state", 8)):
-        trace[f"{prefix}_tensor_shape"] = [768, width]
+        trace[f"{prefix}_tensor_shape"] = [budget, width]
         trace[f"{prefix}_tensor_dtype"] = "float32"
-        trace[f"{prefix}_tensor_sha256"] = zero_array_hash((768, width))
+        trace[f"{prefix}_tensor_sha256"] = zero_array_hash((budget, width))
     trace["prepared_memory_components_sha256"] = hashlib.sha256(b"".join(
         bytes.fromhex(trace[field]) for field in ("image_tensor_sha256", "position_tensor_sha256",
                                                  "state_tensor_sha256", "mask_sha256"))).hexdigest()
     if final:
         trace.update({
-            "prepared_memory_input_shape": [768, 2824], "prepared_memory_input_dtype": "float32",
-            "prepared_memory_input_sha256": zero_array_hash((768, 2824)),
-            "final_memory_tensor_shape": [1, 768, 1024], "final_memory_tensor_dtype": "float32",
+            "prepared_memory_input_shape": [budget, 2824], "prepared_memory_input_dtype": "float32",
+            "prepared_memory_input_sha256": zero_array_hash((budget, 2824)),
+            "final_memory_tensor_shape": [1, budget, 1024], "final_memory_tensor_dtype": "float32",
             "final_memory_tensor_is_floating": True, "final_memory_tensor_finite": True,
-            "final_memory_tensor_sha256": zero_array_hash((1, 768, 1024)),
+            "final_memory_tensor_sha256": zero_array_hash((1, budget, 1024)),
             "environment_step": call * 16, "model_latency_ms": 5.0,
         })
     return trace

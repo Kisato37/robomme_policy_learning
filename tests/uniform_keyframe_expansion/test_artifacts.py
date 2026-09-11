@@ -80,7 +80,7 @@ def test_run_preparation_is_new_write_once_scoped_and_configuration_bound(tmp_pa
     store = create_store(tmp_path)
     assert store.stage == "smoke"
     assert store.manifest["creation_scope"] == "artifact_preparation_not_launch_authorization"
-    assert store.completeness()["expected_count"] == 48
+    assert store.completeness()["expected_count"] == 64
     assert store.completeness()["completed_count"] == 0
     assert ExpansionRunStore.open(store.run_root).manifest == store.manifest
     with pytest.raises(FileExistsError):
@@ -278,7 +278,7 @@ def test_retry_checks_actual_initial_seed_hash_and_history_not_just_config(tmp_p
 
 def test_wrong_trace_context_seed_missing_duplicate_call_and_suffix_rejected(tmp_path):
     store = create_store(tmp_path)
-    writer = store.new_attempt(c.build_smoke_matrix()["rows"][1], 0)
+    writer = store.new_attempt(c.build_smoke_matrix()["rows"][2], 0)
     initial(writer)
     bad = trace(writer)
     bad["selector_seed"] += 1

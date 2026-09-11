@@ -15,9 +15,14 @@ from typing import Any
 
 import numpy as np
 
+from mme_vla_suite.shared.keyframe_oracle_sampling import (
+    FORMAL_SEED_DATASET, FORMAL_SEED_SCOPE, SMOKE_SEED_DATASET,
+    SMOKE_SEED_SCOPE, derive_random_seed, derive_smoke_random_seed,
+    official_uniform_indices,
+)
 from mme_vla_suite.shared.uniform_keyframe_config import payload_digest
 from mme_vla_suite.shared.uniform_keyframe_expansion import (
-    MAX_POLICY_CALLS, SEED_FAMILY, ExpansionInvariantError,
+    CANONICAL_TASKS, MAX_POLICY_CALLS, SEED_FAMILY, ExpansionInvariantError,
     derive_expansion_seed, select_expansion_indices,
 )
 
@@ -79,6 +84,46 @@ def _floating_dtype(value: Any, name: str) -> None:
         raise ExpansionTraceError(f"Trace {name} must name a supported floating dtype")
 
 
+def _validate_u_selection(trace: Mapping[str, Any], step: int,
+                          boundaries: list[int]) -> tuple[list[int], dict[str, Any]]:
+    """Replay the literal released U sampler and its existing audit fields."""
+    _equal(_get(trace, "arm"), "U", "arm")
+    _equal(_get(trace, "selector_name"), "U", "selector_name")
+    split, task = _get(trace, "split"), _get(trace, "task")
+    episode = _integer(_get(trace, "episode_id"), "episode_id")
+    call = _integer(_get(trace, "policy_call_index"), "policy_call_index",
+                    maximum=MAX_POLICY_CALLS - 1)
+    if task not in CANONICAL_TASKS:
+        raise ExpansionTraceError("Trace task is outside the frozen population")
+    if split == FORMAL_SEED_DATASET and 0 <= episode < 50:
+        scope, derive = FORMAL_SEED_SCOPE, derive_random_seed
+    elif split == SMOKE_SEED_DATASET and episode == 0:
+        scope, derive = SMOKE_SEED_SCOPE, derive_smoke_random_seed
+    else:
+        raise ExpansionTraceError("Trace is outside the frozen split/episode population")
+    selected = official_uniform_indices(step)
+    seeds = [derive(task, episode, index) for index in range(MAX_POLICY_CALLS)]
+    selected_boundaries = len(set(selected) & set(boundaries))
+    expected = {
+        "selector_seed": None, "seed_table_scope": scope,
+        "seed_table_dataset": split, "seed_table_sha256": payload_digest(seeds),
+        "selected_frame_indices": selected, "selected_indices_sha256": payload_digest(selected),
+        "valid_frame_count": len(selected), "padding_frame_count": 32 - len(selected),
+        "valid_memory_token_count": len(selected) * 16,
+        "history_length": step + 1, "current_history_index": step,
+        "age_distribution": [step - index for index in selected],
+        "maximum_temporal_gap": max((right - left for left, right in zip(selected, selected[1:])), default=0),
+        "boundary_recall": selected_boundaries / len(boundaries),
+        "effective_memory_budget": 512, "base_uniform_token_budget": 512,
+    }
+    for key, value in expected.items():
+        _equal(_get(trace, key), value, key)
+    return selected, {
+        "arm": "U", "split": split, "task": task, "episode_id": episode,
+        "policy_call_index": call,
+    }
+
+
 def validate_selector_trace(
     trace: Mapping[str, Any], *, require_final_memory: bool = True,
 ) -> dict[str, Any]:
@@ -103,49 +148,60 @@ def validate_selector_trace(
     normalized = [_integer(index, "boundary_index", maximum=step) for index in boundaries]
     if normalized != sorted(set(normalized)):
         raise ExpansionTraceError("Boundary indices must be unique and chronological")
+    if not boundaries or boundaries[0] != 0:
+        raise ExpansionTraceError("Visible boundary history must include the initial frame")
     boundary_set = set(boundaries)
     # Reconstruct only the already visible labels. This is a checker, not the
     # runtime U sampler or a generator of new/future boundary observations.
     flags = [index in boundary_set for index in range(step + 1)]
-    try:
-        selected, decision = select_expansion_indices(
-            _get(trace, "arm"), step_idx=step,
-            base_uniform_indices=_get(trace, "base_uniform_indices"), boundary_flags=flags,
-            split=_get(trace, "split"), task=_get(trace, "task"),
-            episode_id=_get(trace, "episode_id"),
-            policy_call_index=_get(trace, "policy_call_index"),
-        )
-    except (ExpansionInvariantError, TypeError, KeyError) as exc:
-        raise ExpansionTraceError(f"Selector trace cannot replay under the frozen rules: {exc}") from exc
-    # Context normalization in the helper is not permission for loose JSON IDs.
-    for key, expected in decision.items():
-        _equal(_get(trace, key), expected, key)
-    if (decision["split"] == "val" and decision["episode_id"] != 0
-            or decision["split"] == "test" and not 0 <= decision["episode_id"] < 50):
-        raise ExpansionTraceError("Trace is outside the frozen split/episode population")
-
-    seed_table = [derive_expansion_seed(decision["split"], decision["task"],
-                                       decision["episode_id"], index)
-                  for index in range(MAX_POLICY_CALLS)]
+    arm = _get(trace, "arm")
+    if arm == "U":
+        selected, decision = _validate_u_selection(trace, step, normalized)
+        budget = 512
+    else:
+        try:
+            selected, decision = select_expansion_indices(
+                arm, step_idx=step,
+                base_uniform_indices=_get(trace, "base_uniform_indices"), boundary_flags=flags,
+                split=_get(trace, "split"), task=_get(trace, "task"),
+                episode_id=_get(trace, "episode_id"),
+                policy_call_index=_get(trace, "policy_call_index"),
+            )
+        except (ExpansionInvariantError, TypeError, KeyError) as exc:
+            raise ExpansionTraceError(f"Selector trace cannot replay under the frozen rules: {exc}") from exc
+        # Context normalization in the helper is not permission for loose JSON IDs.
+        for key, expected in decision.items():
+            _equal(_get(trace, key), expected, key)
+        if (decision["split"] == "val" and decision["episode_id"] != 0
+                or decision["split"] == "test" and not 0 <= decision["episode_id"] < 50):
+            raise ExpansionTraceError("Trace is outside the frozen split/episode population")
+        seed_table = [derive_expansion_seed(decision["split"], decision["task"],
+                                           decision["episode_id"], index)
+                      for index in range(MAX_POLICY_CALLS)]
+        expected_expansion = {
+            "selector_name": decision["arm"], "seed_table_scope": SEED_FAMILY,
+            "seed_table_dataset": decision["split"], "seed_table_sha256": payload_digest(seed_table),
+            "history_length": step + 1, "current_history_index": step,
+            "selected_frame_indices": selected, "selected_indices_sha256": payload_digest(selected),
+            "valid_memory_token_count": len(selected) * 16,
+            "effective_memory_budget": 768, "base_uniform_token_budget": 512,
+            "age_distribution": [step - index for index in selected],
+            "maximum_temporal_gap": max((right - left for left, right in zip(selected, selected[1:])), default=0),
+            "boundary_recall": decision["selected_boundary_count"] / decision["visible_boundary_count"],
+        }
+        for key, expected in expected_expansion.items():
+            _equal(_get(trace, key), expected, key)
+        budget = 768
     expected_values = {
-        "selector_name": decision["arm"], "seed_table_scope": SEED_FAMILY,
-        "seed_table_dataset": decision["split"], "seed_table_sha256": payload_digest(seed_table),
-        "history_length": step + 1, "current_history_index": step,
-        "selected_frame_indices": selected, "selected_indices_sha256": payload_digest(selected),
-        "valid_memory_token_count": len(selected) * 16,
-        "mask_shape": [768], "mask_dtype": "bool", "mask_valid_prefix_all_true": True,
-        "mask_padding_all_false": True, "effective_memory_budget": 768,
-        "base_uniform_token_budget": 512,
-        "image_tensor_shape": [768, 2048], "position_tensor_shape": [768, 768],
-        "state_tensor_shape": [768, 8],
-        "prepared_memory_component_shapes": [[768, 2048], [768, 768], [768, 8], [768]],
-        "age_distribution": [step - index for index in selected],
-        "maximum_temporal_gap": max((right - left for left, right in zip(selected, selected[1:])), default=0),
-        "boundary_recall": decision["selected_boundary_count"] / decision["visible_boundary_count"],
+        "mask_shape": [budget], "mask_dtype": "bool", "mask_valid_prefix_all_true": True,
+        "mask_padding_all_false": True,
+        "image_tensor_shape": [budget, 2048], "position_tensor_shape": [budget, 768],
+        "state_tensor_shape": [budget, 8],
+        "prepared_memory_component_shapes": [[budget, 2048], [budget, 768], [budget, 8], [budget]],
     }
     for key, expected in expected_values.items():
         _equal(_get(trace, key), expected, key)
-    expected_mask = np.zeros(768, dtype=np.bool_)
+    expected_mask = np.zeros(budget, dtype=np.bool_)
     expected_mask[:len(selected) * 16] = True
     _equal(_get(trace, "mask_sha256"), _array_digest(expected_mask), "mask_sha256")
 
@@ -169,14 +225,14 @@ def validate_selector_trace(
     prepared_fields = ("prepared_memory_input_shape", "prepared_memory_input_dtype",
                        "prepared_memory_input_sha256")
     if require_final_memory or any(key in trace for key in prepared_fields):
-        _equal(_get(trace, prepared_fields[0]), [768, 2824], prepared_fields[0])
+        _equal(_get(trace, prepared_fields[0]), [budget, 2824], prepared_fields[0])
         _floating_dtype(_get(trace, prepared_fields[1]), prepared_fields[1])
         _digest(_get(trace, prepared_fields[2]), prepared_fields[2])
     final_fields = ("final_memory_tensor_shape", "final_memory_tensor_dtype",
                     "final_memory_tensor_is_floating", "final_memory_tensor_finite",
                     "final_memory_tensor_sha256")
     if require_final_memory or any(key in trace for key in final_fields):
-        _equal(_get(trace, final_fields[0]), [1, 768, 1024], final_fields[0])
+        _equal(_get(trace, final_fields[0]), [1, budget, 1024], final_fields[0])
         _floating_dtype(_get(trace, final_fields[1]), final_fields[1])
         _equal(_get(trace, final_fields[2]), True, final_fields[2])
         _equal(_get(trace, final_fields[3]), True, final_fields[3])

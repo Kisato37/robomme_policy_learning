@@ -5,7 +5,6 @@ so the evidence graph can be exercised using tiny ordinary files.
 """
 
 from copy import deepcopy
-import hashlib
 import json
 from pathlib import Path
 import sys
@@ -105,34 +104,60 @@ class Fixture:
         self.evidence["architecture_gate"] = fixture["gate"]
         return fixture
 
-    def smoke(self, *, count=48, error_at=None, unequal_at=None):
+    def smoke(self, *, count=64, error_at=None, unequal_at=None):
         self.architecture()
         store = ExpansionRunStore.create(self.path / "uniform_keyframe_expansion" / "source-smoke",
                                          stage="smoke", run_manifest=self.provenance)
-        request = lc.build_execution_request(run_root=store.run_root, stage="end_to_end_smoke", row_ids=list(range(count)),
-                    execution_id=str(uuid.uuid4()), gpu_uuid=GPU, evidence=self.evidence)
-        approval = self.write("source_approval.json", {"schema_version": 1, "kind": "user_authorization",
-            "protocol_family": c.PROTOCOL_FAMILY, "stage": "end_to_end_smoke", "approved": True,
-            "request_sha256": request["request_sha256"], "instruction": self.raw,
-            "recorded_utc": "2026-09-10T00:00:00Z", "recorded_by": "not-real-CPU-fixture"})
-        source_plan = lc.validate_execution_plan(lc.build_execution_plan(request, approval))
-        identity = source_plan.execution_identity
-        execution = {"plan": self.write("source_execution.json", source_plan.payload),
-                     "controller_result": self.write("source_controller.json", {"execution_identity": identity, "owned_process_cleanup_confirmed": True}),
-                     "shard_result": self.write("source_shard.json", {"execution_identity": identity, "row_ids": list(range(count))}),
-                     "policy_bootstrap": self.write("source_bootstrap.json", {"policy_execution_identity": identity,
-                        "checkpoint_content_verified_in_this_process": True, "model_gpu_uuid": GPU, "model_process_pid": 99,
-                        "checkpoint_content_evidence": {"archive_sha256": c.CHECKPOINT_ARCHIVE_SHA256,
-                                                         "content_tree": source_plan.checkpoint["content_tree"]}})}
         from mme_vla_suite.shared.uniform_keyframe_config import RELEASED_HISTORY_CONFIG, expanded_history_mapping
+        from mme_vla_suite.shared.uniform_keyframe_config import payload_digest
         _, expected = expanded_history_mapping(RELEASED_HISTORY_CONFIG)
-        execution["policy_ready"] = self.write("source_ready.json", {"wire_schema": 1, "experiment_family": c.PROTOCOL_FAMILY,
-            "effective_memory_budget": 768, "evaluation_policy_seed": 7, "resident_policy": True,
-            "strict_weight_tree_load": True, "effective_history_config_sha256": expected["effective_history_config_sha256"],
-            "source_history_config_sha256": expected["source_history_config_sha256"], "direct_execution": identity, "model_process_pid": 99})
+        selected_rows = c.build_smoke_matrix()["rows"][:count]
+        execution_records = []
+        owner_by_row = {}
+        for ordinal, variant in enumerate((c.U_POLICY_VARIANT, c.EXPANDED_POLICY_VARIANT)):
+            row_ids = [row["row_id"] for row in selected_rows
+                       if c.policy_variant_for_arm(row["arm"]) == variant]
+            if not row_ids:
+                continue
+            request = lc.build_execution_request(
+                run_root=store.run_root, stage="end_to_end_smoke", row_ids=row_ids,
+                execution_id=str(uuid.uuid4()), gpu_uuid=GPU, evidence=self.evidence)
+            approval = self.write(f"source_approval_{ordinal}.json", {
+                "schema_version": 1, "kind": "user_authorization",
+                "protocol_family": c.PROTOCOL_FAMILY, "stage": "end_to_end_smoke", "approved": True,
+                "request_sha256": request["request_sha256"], "instruction": self.raw,
+                "recorded_utc": "2026-09-10T00:00:00Z", "recorded_by": "not-real-CPU-fixture"})
+            source_plan = lc.validate_execution_plan(lc.build_execution_plan(request, approval))
+            identity = source_plan.execution_identity
+            for row_id in row_ids:
+                owner_by_row[row_id] = identity
+            is_u = variant == c.U_POLICY_VARIANT
+            execution_records.append({
+                "plan": self.write(f"source_execution_{ordinal}.json", source_plan.payload),
+                "controller_result": self.write(f"source_controller_{ordinal}.json", {
+                    "execution_identity": identity, "owned_process_cleanup_confirmed": True}),
+                "shard_result": self.write(f"source_shard_{ordinal}.json", {
+                    "execution_identity": identity, "row_ids": row_ids}),
+                "policy_bootstrap": self.write(f"source_bootstrap_{ordinal}.json", {
+                    "policy_execution_identity": identity,
+                    "checkpoint_content_verified_in_this_process": True, "model_gpu_uuid": GPU,
+                    "model_process_pid": 99 + ordinal,
+                    "checkpoint_content_evidence": {"archive_sha256": c.CHECKPOINT_ARCHIVE_SHA256,
+                                                     "content_tree": source_plan.checkpoint["content_tree"]}}),
+                "policy_ready": self.write(f"source_ready_{ordinal}.json", {
+                    "wire_schema": 1, "experiment_family": c.PROTOCOL_FAMILY,
+                    "policy_variant": variant,
+                    "effective_memory_budget": 512 if is_u else 768,
+                    "evaluation_policy_seed": 7, "resident_policy": True,
+                    "strict_weight_tree_load": True,
+                    "effective_history_config_sha256": (payload_digest(RELEASED_HISTORY_CONFIG)
+                                                          if is_u else expected["effective_history_config_sha256"]),
+                    "source_history_config_sha256": expected["source_history_config_sha256"],
+                    "direct_execution": identity, "model_process_pid": 99 + ordinal}),
+            })
         results = []
-        for row in c.build_smoke_matrix()["rows"][:count]:
-            writer = store.new_attempt(row, 0, {"policy_execution_identity": identity})
+        for row in selected_rows:
+            writer = store.new_attempt(row, 0, {"policy_execution_identity": owner_by_row[row["row_id"]]})
             if row["row_id"] == unequal_at:
                 initial(writer, seed=999)
                 writer.append_trace(trace(writer))
@@ -144,36 +169,11 @@ class Fixture:
         manifest = lc.file_reference(store.run_root / "run_manifest.json")
         self.evidence["end_to_end_gate"] = self.write("end_to_end_gate.json", self.gate(
             "end_to_end_gate", run_manifest=manifest, completed_count=count, sources=[manifest],
-            results=results, execution_records=[execution]))
+            results=results, execution_records=execution_records))
         return store
 
     def formal(self, **kwargs):
         self.smoke(**kwargs)
-        hashes = {key: hashlib.sha256(key.encode()).hexdigest() for key in lc.INITIAL_HASH_KEYS}
-        source_run = self.write("fixture-U/protocol/launch_manifest.json", {"run_id": "fixture-U"})
-        records = []
-        stage_sequence = self.write("fixture-U/original_stages.json", {"current_task_indices": [0] * 64})
-        stage_digest = hashlib.sha256(b"list[" + b"0" * 64 + b"]").hexdigest()
-        for task in c.FORMAL_TASKS:
-            for ep in range(50):
-                key = {"task": task, "episode_id": ep, "arm": "U", "trajectory_kind": "formal"}
-                fixed = {"scientific_key": key, "dataset": "test", "max_steps": 1300, "executed_action_horizon": 16,
-                         "evaluation_policy_seed": 7, "checkpoint_id": 79999}
-                prefix = f"fixture-U/trajectories/{task}/{ep}"
-                raw_manifest = self.write(f"{prefix}/episode_manifest.json", fixed)
-                raw_initial = self.write(f"{prefix}/initial_condition_hashes.json", hashes)
-                raw_result = self.write(f"{prefix}/episode_result.json", {**fixed, "success": False, "terminal_reason": "fail",
-                    "episode_manifest_sha256": raw_manifest["sha256"], "initial_condition_hashes_sha256": raw_initial["sha256"]})
-                alignment = self.write(f"{prefix}/alignment.json", {"schema_version": 1, "kind": "u_reset_alignment",
-                    "scientific_key": key, "source_result_sha256": raw_result["sha256"], "reset_prefix_frame_count": 64,
-                    "reset_prefix_stage_count": 64, "reset_prefix_frames_sha256": hashes["front_observations_sha256"],
-                    "reset_prefix_stages_sha256": stage_digest, "stage_sequence": stage_sequence, "sources": [stage_sequence]})
-                records.append({"task": task, "episode_id": ep, "arm": "U", "dataset": "test", "success": False,
-                    "initial_hashes": hashes, "reset_prefix_frames_sha256": hashes["front_observations_sha256"],
-                    "reset_prefix_stages_sha256": stage_digest, "raw_result": raw_result, "raw_manifest": raw_manifest,
-                    "raw_initial": raw_initial, "reset_alignment": alignment})
-        self.evidence["baseline"] = self.write("baseline.json", self.gate("u_baseline", source_run_id="fixture-U",
-                                                           records=records, review=self.raw, source_run_manifest=source_run))
         self.evidence["exposure"] = self.write("exposure.json", {
             "schema_version": 1, "kind": "prior_exposure", "protocol_family": c.PROTOCOL_FAMILY,
             "present_formal_outcomes_inspected": False, "sources": [self.raw],
@@ -183,11 +183,11 @@ class Fixture:
     def freeze(self):
         self.evidence["freeze"] = self.write("freeze.json", {"schema_version": 1, "kind": "protocol_freeze",
             "protocol_version": "v1.0", "binding": self.binding, "sources": [self.raw],
-            **{f"{key}_sha256": self.evidence[key]["sha256"] for key in ("protocol", "baseline", "end_to_end_gate", "architecture_gate", "exposure")}})
+            **{f"{key}_sha256": self.evidence[key]["sha256"] for key in ("protocol", "end_to_end_gate", "architecture_gate", "exposure")}})
 
     def request(self, stage="cpu_prepare", *, rows=None):
         if rows is None:
-            rows = [] if stage in ("cpu_prepare", "architecture_smoke") else [0, 1]
+            rows = [] if stage in ("cpu_prepare", "architecture_smoke") else [1, 2]
         return lc.build_execution_request(run_root=self.store.run_root, stage=stage, row_ids=rows,
                                          execution_id=str(uuid.uuid4()), gpu_uuid=GPU, evidence=self.evidence)
 
@@ -308,10 +308,12 @@ def test_declared_source_and_runtime_constraints_fail_closed(fixture, mutation):
 
 def test_end_to_end_accepts_bound_architecture_with_nonzero_positional_difference(fixture):
     fixture.architecture()
-    plan = lc.validate_execution_plan(fixture.plan("end_to_end_smoke", rows=[0, 1, 2]))
-    assert [row["row_id"] for row in plan.rows] == [0, 1, 2]
+    plan = lc.validate_execution_plan(fixture.plan("end_to_end_smoke", rows=[1, 2]))
+    assert [row["row_id"] for row in plan.rows] == [1, 2]
     assert plan.store_root == fixture.store.run_root
     assert plan.checkpoint_dir.name == "79999"
+    with pytest.raises(lc.ExpansionLaunchError, match="cannot mix"):
+        fixture.plan("end_to_end_smoke", rows=[0, 1])
 
 
 @pytest.mark.parametrize("mutation", ["bare_pass", "missing_measurements", "missing_long", "nonfinite", "training", "different_runtime"])
@@ -341,15 +343,15 @@ def test_cpu_pass_cannot_hide_failed_junit(fixture):
     with pytest.raises(lc.ExpansionLaunchError): fixture.request("architecture_smoke")
 
 
-def test_formal_requires_full_real_store_audit_and_bound_800_u_sources(tmp_path, monkeypatch):
+def test_formal_requires_full_real_store_audit_and_fresh_same_run_u(tmp_path, monkeypatch):
     fixture = Fixture(tmp_path, monkeypatch, formal=True)
     fixture.formal()
-    plan = lc.validate_execution_plan(fixture.plan("formal", rows=[0, 1]))
+    plan = lc.validate_execution_plan(fixture.plan("formal", rows=[1, 2]))
     assert plan.stage == "formal" and len(plan.rows) == 2
     assert plan.require_runtime_stage("formal") is plan
-    assert lc.deep_validate_runtime_evidence(plan)["source_smoke_raw_episodes_audited"] == 48
-    # Scope remains a shard of the frozen 1600 matrix, not a reduced study.
-    assert fixture.store.completeness()["expected_count"] == 1600
+    assert lc.deep_validate_runtime_evidence(plan)["source_smoke_raw_episodes_audited"] == 64
+    # Scope remains a shard of the frozen 2400 matrix, not a reduced study.
+    assert fixture.store.completeness()["expected_count"] == 2400
     raw = next((fixture.path / "uniform_keyframe_expansion/source-smoke/trajectories").rglob("initial_observations.npz"))
     raw.write_bytes(b"changed underlying archive, not the small manifest")
     assert plan.revalidate().stage == "formal"  # Deliberately not a deep raw-file audit.
@@ -357,18 +359,11 @@ def test_formal_requires_full_real_store_audit_and_bound_800_u_sources(tmp_path,
         lc.deep_validate_runtime_evidence(plan)
 
 
-@pytest.mark.parametrize("mutation", ["incomplete_smoke", "benchmark_error", "unpaired_smoke", "missing_u", "duplicate_u", "unbound_u_source", "v09", "exposure"])
+@pytest.mark.parametrize("mutation", ["incomplete_smoke", "benchmark_error", "unpaired_smoke", "v09", "exposure"])
 def test_formal_gates_reject_semantic_and_source_shortcuts(tmp_path, monkeypatch, mutation):
     fixture = Fixture(tmp_path, monkeypatch, formal=True)
-    kwargs = {"count": 47} if mutation == "incomplete_smoke" else {"error_at": 0} if mutation == "benchmark_error" else {"unequal_at": 1} if mutation == "unpaired_smoke" else {}
+    kwargs = {"count": 63} if mutation == "incomplete_smoke" else {"error_at": 0} if mutation == "benchmark_error" else {"unequal_at": 1} if mutation == "unpaired_smoke" else {}
     fixture.formal(**kwargs)
-    if mutation in ("missing_u", "duplicate_u", "unbound_u_source"):
-        baseline = json.loads(Path(fixture.evidence["baseline"]["path"]).read_text())
-        if mutation == "missing_u": baseline["records"].pop()
-        if mutation == "duplicate_u": baseline["records"][-1] = baseline["records"][0]
-        if mutation == "unbound_u_source": baseline["records"][0]["raw_result"] = fixture.raw
-        fixture.evidence["baseline"] = fixture.write("bad_baseline.json", baseline)
-        fixture.freeze()
     if mutation == "v09":
         # Even if one could rewrite a manifest hash, the protocol version gate
         # must reject v0.9 for formal. Directly exercise the request validator.
@@ -389,7 +384,7 @@ def test_symlink_evidence_rejected(fixture):
     with pytest.raises(lc.ExpansionLaunchError): lc.file_reference(link)
 
 
-@pytest.mark.parametrize("rows", [[0, 0], [True], [-1], [48]])
+@pytest.mark.parametrize("rows", [[0, 0], [True], [-1], [64], [0, 1]])
 def test_invalid_shard_rows_never_change_the_census(fixture, rows):
     fixture.architecture()
     with pytest.raises((lc.ExpansionLaunchError, ValueError)):

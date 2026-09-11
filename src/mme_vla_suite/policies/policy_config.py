@@ -25,11 +25,12 @@ def create_trained_policy(
     default_prompt: str | None = None,
     norm_stats: dict[str, transforms.NormStats] | None = None,
     experimental_memory_expansion: str | None = None,
+    strict_weight_tree_load: bool = False,
 ) -> _policy.MME_VLA_Policy:
     checkpoint_dir = pathlib.Path(checkpoint_dir)
     repack_transforms = repack_transforms or transforms.Group()
     
-    logging.info(f"Checking history config")
+    logging.info("Checking history config")
     history_config = None
     history_config_path = checkpoint_dir.parent / "history_config.txt"
     if history_config_path.exists():
@@ -76,7 +77,9 @@ def create_trained_policy(
 
     logging.info("Loading model...")
     params = _model.restore_params(checkpoint_dir / "params", dtype=jnp.bfloat16)
-    if experimental_memory_expansion is None:
+    if type(strict_weight_tree_load) is not bool:
+        raise ValueError("strict_weight_tree_load must be a boolean")
+    if experimental_memory_expansion is None and not strict_weight_tree_load:
         model = train_config.model.load(params)
     else:
         # Missing, extra or shape-mismatched parameters must fail, not initialize

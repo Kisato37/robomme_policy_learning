@@ -1,9 +1,9 @@
-"""Pure paired-outcome analysis for UK48/UN48 and the essential audited U.
+"""Pure paired-outcome analysis for same-run Lighthouse U/UK48/UN48.
 
 No artifacts are loaded or written here.  Upstream aggregation must supply the
 first valid scientific outcome per cell, not infrastructure/invariant failures.
-The baseline attestation binds the caller's external raw-provenance audit to
-these exact outcomes; this function cannot authenticate that audit by itself.
+The run attestation binds the caller's raw-provenance and three-arm initial-input
+audit to these exact outcomes; this function cannot authenticate that audit by itself.
 """
 
 from __future__ import annotations
@@ -144,24 +144,24 @@ def outcome_binding_hashes(table: OutcomeTable) -> dict[str, str]:
             "u_outcomes_sha256": canonical_sha256([record for record in records if record["arm"] == "U"])}
 
 
-def _validate_baseline_attestation(attestation: Any, table: OutcomeTable) -> dict[str, Any]:
+def _validate_run_attestation(attestation: Any, table: OutcomeTable) -> dict[str, Any]:
     if not isinstance(attestation, Mapping):
-        raise ExpansionAnalysisError("Formal analysis needs an externally verified U-baseline attestation, not a bool")
-    required_true = ("all_800_u_outcomes_audited", "initial_inputs_states_text_matched",
+        raise ExpansionAnalysisError("Formal analysis needs a verified same-run three-arm attestation, not a bool")
+    required_true = ("all_2400_outcomes_audited", "initial_inputs_states_text_matched",
                      "seed_difficulty_mapping_matched", "checkpoint_control_pipeline_matched",
-                     "execution_provenance_reviewed", "new_arm_pairing_verified")
+                     "execution_provenance_reviewed", "same_run_three_arm_pairing_verified")
     if attestation.get("status") != "verified" or any(attestation.get(key) is not True for key in required_true):
-        raise ExpansionAnalysisError("U-baseline/initial-input audit is not verified")
-    for key in ("baseline_source_run_id", "comparison_audit_id"):
+        raise ExpansionAnalysisError("Same-run three-arm/initial-input audit is not verified")
+    for key in ("source_run_id", "comparison_audit_id"):
         if not isinstance(attestation.get(key), str) or not attestation[key].strip():
-            raise ExpansionAnalysisError(f"Baseline attestation needs {key}")
+            raise ExpansionAnalysisError(f"Run attestation needs {key}")
     for key in ("raw_provenance_manifest_sha256", "comparison_audit_sha256"):
         digest = attestation.get(key)
         if not isinstance(digest, str) or len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
-            raise ExpansionAnalysisError(f"Baseline attestation needs a valid {key}")
+            raise ExpansionAnalysisError(f"Run attestation needs a valid {key}")
     for key, digest in outcome_binding_hashes(table).items():
         if attestation.get(key) != digest:
-            raise ExpansionAnalysisError(f"Baseline attestation does not bind these exact outcomes: {key}")
+            raise ExpansionAnalysisError(f"Run attestation does not bind these exact outcomes: {key}")
     return dict(attestation)
 
 
@@ -209,7 +209,7 @@ def _effect(table: OutcomeTable, treatment: str, control: str, bootstrap: int, p
 
 def analyze_matched_outcomes(
     records: Iterable[Mapping[str, Any]] | Mapping[str, Any], *,
-    baseline_attestation: Mapping[str, Any] | None = None,
+    run_attestation: Mapping[str, Any] | None = None,
     bootstrap_replicates: int = DEFAULT_BOOTSTRAP_REPLICATES,
     randomization_replicates: int = DEFAULT_RANDOMIZATION_REPLICATES,
     allow_fixture: bool = False,
@@ -221,7 +221,7 @@ def analyze_matched_outcomes(
     if not allow_fixture and (bootstrap_replicates != DEFAULT_BOOTSTRAP_REPLICATES or randomization_replicates != DEFAULT_RANDOMIZATION_REPLICATES):
         raise ExpansionAnalysisError("Formal analysis requires 100000 bootstrap and 100000 randomization replicates")
     table = validate_outcome_records(records, allow_fixture=allow_fixture)
-    attestation = None if allow_fixture else _validate_baseline_attestation(baseline_attestation, table)
+    attestation = None if allow_fixture else _validate_run_attestation(run_attestation, table)
     primary = _effect(table, *PRIMARY_COMPARISON, bootstrap_replicates, randomization_replicates)
     auxiliary = {f"{treatment} - {control}": _effect(table, treatment, control, bootstrap_replicates, randomization_replicates)
                  for treatment, control in AUXILIARY_COMPARISONS}
@@ -232,12 +232,12 @@ def analyze_matched_outcomes(
     decisions = classify_primary_result(primary)
     records_by_arm = {arm: [record for record in table.records() if record["arm"] == arm] for arm in ARMS}
     return {
-        "protocol_family": PROTOCOL_FAMILY, "analysis_protocol_version": "v0.9",
-        "analysis_status": "nonformal_fixture_only" if allow_fixture else "complete_under_supplied_verified_baseline_attestation",
+        "protocol_family": PROTOCOL_FAMILY, "analysis_protocol_version": "v1.0",
+        "analysis_status": "nonformal_fixture_only" if allow_fixture else "complete_under_verified_same_run_attestation",
         "analysis_scope": "outcome-statistics; raw-launch-provenance-external-required",
         "formal_analysis_contract_met": not allow_fixture,
         "raw_artifacts_reverified_by_this_function": False,
-        "baseline_attestation": attestation, **outcome_binding_hashes(table),
+        "run_attestation": attestation, **outcome_binding_hashes(table),
         "cell_count": table.cell_count, "paired_block_count": len(table.blocks), "task_count": len(FORMAL_TASKS),
         "analysis_seed": ANALYSIS_SEED, "numpy_version": np.__version__,
         "analysis_implementation": "expansion arm adapter; unchanged parent paired_effect/hierarchical_percentile_bootstrap_ci/paired_randomization_test/holm_adjust",
@@ -252,5 +252,5 @@ def analyze_matched_outcomes(
         "exposure_based_exclusions": [],
         "limitations": ["Entire prior-viewed census retained; no unexposed-subset sensitivity.",
                         "Primary tests the whole expansion scheme, including unchanged positional effects.",
-                        "Caller must authenticate supplied baseline audit and all raw scientific outcomes."],
+                        "Caller must authenticate supplied run audit and all raw scientific outcomes."],
     }

@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -32,10 +31,6 @@ BASE_EVIDENCE = {"protocol", "policy_source", "benchmark_source", "environment",
 ARCH_CHECKS = ("strict_real_checkpoint_load", "short_long_both_arms", "shapes_masks_finite",
                "same_process_repeatability", "reset_isolation", "padded_u_positional_diagnostic",
                "latency_and_peak_memory", "no_training", "causal_development_inputs")
-INITIAL_HASH_KEYS = ("front_observations_sha256", "wrist_observations_sha256", "robot_states_sha256",
-                     "task_state_sha256", "task_instruction_sha256")
-
-
 class ExpansionLaunchError(ValueError):
     pass
 
@@ -358,22 +353,22 @@ def _smoke_gate(ref, binding):
             raise ExpansionLaunchError("Smoke model process identity is missing")
         ready = _json_ref(execution["policy_ready"], "policy readiness")
         from experiments.uniform_keyframe_expansion.serving import validate_server_metadata
-        validate_server_metadata(ready, identity)
+        validate_server_metadata(ready, identity, c.policy_variant_for_rows(source_plan.rows))
         _same(ready.get("model_process_pid"), pid, "smoke readiness/model PID")
         for row in source_plan.rows:
             if row["row_id"] in owner_by_row:
                 raise ExpansionLaunchError("Smoke execution plans overlap rows")
             owner_by_row[row["row_id"]] = identity
-    _same(sorted(owner_by_row), list(range(48)), "executed smoke census")
+    _same(sorted(owner_by_row), list(range(c.SMOKE_TRAJECTORY_COUNT)), "executed smoke census")
     records = gate.get("results")
-    if not isinstance(records, list) or len(records) != 48:
-        raise ExpansionLaunchError("Smoke requires all 48 bound result records")
+    if not isinstance(records, list) or len(records) != c.SMOKE_TRAJECTORY_COUNT:
+        raise ExpansionLaunchError(f"Smoke requires all {c.SMOKE_TRAJECTORY_COUNT} bound result records")
     by_row = {}
     for record in records:
         if not isinstance(record, Mapping) or set(record) != {"row_id", "result", "manifest", "initial"} or type(record["row_id"]) is not int or record["row_id"] in by_row:
             raise ExpansionLaunchError("Malformed/duplicate smoke result binding")
         by_row[record["row_id"]] = record
-    _same(sorted(by_row), list(range(48)), "bound smoke result census")
+    _same(sorted(by_row), list(range(c.SMOKE_TRAJECTORY_COUNT)), "bound smoke result census")
     initial_by_task = {}
     for row in c.build_smoke_matrix()["rows"]:
         record = by_row[row["row_id"]]
@@ -404,90 +399,14 @@ def _smoke_gate(ref, binding):
         if row["task"] in initial_by_task:
             _same(signature, initial_by_task[row["task"]], "smoke cross-arm/scope initial conditions")
         initial_by_task[row["task"]] = signature
-    _same(gate.get("completed_count"), 48, "smoke report census")
-
-
-def _baseline(ref, binding):
-    report = _gate(ref, "u_baseline", binding)
-    if not isinstance(report.get("source_run_id"), str) or not report["source_run_id"]:
-        raise ExpansionLaunchError("U source run must be named")
-    _read_ref(report.get("review"), "baseline compatibility review")
-    run_manifest = _json_ref(report.get("source_run_manifest"), "original U run manifest")
-    _same(run_manifest.get("run_id"), report["source_run_id"], "original U source run")
-    run_path = Path(report["source_run_manifest"]["path"])
-    if run_path.name != "launch_manifest.json" or run_path.parent.name != "protocol":
-        raise ExpansionLaunchError("U must reference its original protocol/launch_manifest.json")
-    source_root = run_path.parent.parent
-    records = report.get("records")
-    if not isinstance(records, list) or len(records) != 800:
-        raise ExpansionLaunchError("Exactly 800 audited U baselines are required")
-    expected = {(task, ep) for task in c.FORMAL_TASKS for ep in range(50)}
-    seen = set()
-    for row in records:
-        if not isinstance(row, Mapping) or type(row.get("episode_id")) is not int:
-            raise ExpansionLaunchError("Invalid U record")
-        key = (row.get("task"), row["episode_id"])
-        if key not in expected or key in seen:
-            raise ExpansionLaunchError("Missing/duplicate/noncanonical U baseline key")
-        seen.add(key)
-        _same(row.get("arm"), "U", "baseline arm")
-        _same(row.get("dataset"), "test", "baseline split")
-        if type(row.get("success")) is not bool:
-            raise ExpansionLaunchError("U outcome must be boolean")
-        hashes = row.get("initial_hashes")
-        if not isinstance(hashes, Mapping) or set(hashes) != set(INITIAL_HASH_KEYS):
-            raise ExpansionLaunchError("U requires all actual initial evidence, not a same-seed claim")
-        for key, value in hashes.items():
-            _digest(value, key)
-        for key in ("reset_prefix_frames_sha256", "reset_prefix_stages_sha256"):
-            _digest(row.get(key), key)
-        _same(row["reset_prefix_frames_sha256"], hashes["front_observations_sha256"], "U reset/front binding")
-        raw_result = _json_ref(row.get("raw_result"), "raw U result")
-        raw_manifest = _json_ref(row.get("raw_manifest"), "raw U episode manifest")
-        raw_initial = _json_ref(row.get("raw_initial"), "raw U initial hashes")
-        result_path = Path(row["raw_result"]["path"])
-        if not result_path.is_relative_to(source_root) or result_path.name != "episode_result.json":
-            raise ExpansionLaunchError("U raw result is outside its named original source run")
-        for field, filename in (("raw_manifest", "episode_manifest.json"), ("raw_initial", "initial_condition_hashes.json")):
-            _same(row[field]["path"], str(result_path.parent / filename), f"U sibling {field}")
-        scientific_key = {"task": row["task"], "episode_id": row["episode_id"], "arm": "U", "trajectory_kind": "formal"}
-        for value in (raw_result, raw_manifest):
-            _same(value.get("scientific_key"), scientific_key, "U original scientific identity")
-            for field, expected_value in (("dataset", "test"), ("max_steps", 1300), ("executed_action_horizon", 16),
-                                          ("evaluation_policy_seed", 7), ("checkpoint_id", 79999)):
-                _same(value.get(field), expected_value, f"U frozen {field}")
-        _same(raw_result.get("success"), row["success"], "U outcome from raw result")
-        if raw_result.get("terminal_reason") not in ("success", "fail", "timeout", "error"):
-            raise ExpansionLaunchError("U baseline lacks an official terminal")
-        _same(raw_result["success"], raw_result["terminal_reason"] == "success", "U scientific terminal")
-        _same(raw_result.get("episode_manifest_sha256"), row["raw_manifest"]["sha256"], "U sealed episode manifest")
-        _same(raw_result.get("initial_condition_hashes_sha256"), row["raw_initial"]["sha256"], "U sealed initial observations")
-        _same(raw_initial, hashes, "U actual initial hashes")
-        alignment = _json_ref(row.get("reset_alignment"), "U reset alignment", "u_reset_alignment")
-        _same(alignment.get("scientific_key"), scientific_key, "U reset scientific key")
-        _same(alignment.get("source_result_sha256"), row["raw_result"]["sha256"], "U reset outcome source")
-        for field in ("reset_prefix_frames_sha256", "reset_prefix_stages_sha256"):
-            _same(alignment.get(field), row[field], f"U alignment {field}")
-        count = alignment.get("reset_prefix_frame_count")
-        if type(count) is not int or count < 1:
-            raise ExpansionLaunchError("U reset frame count is missing")
-        _same(alignment.get("reset_prefix_stage_count"), count, "U reset label alignment")
-        _sources(alignment.get("sources"), "U archived alignment audit")
-        sequence = _json_ref(alignment.get("stage_sequence"), "U original reset stage sequence")
-        if alignment["stage_sequence"] not in alignment["sources"]:
-            raise ExpansionLaunchError("U original stage sequence must be a bound raw source")
-        stages = sequence.get("current_task_indices")
-        if not isinstance(stages, list) or len(stages) != count or any(type(stage) is not int for stage in stages):
-            raise ExpansionLaunchError("U per-frame original stage sequence is missing or misaligned")
-        digest = hashlib.sha256(b"list[" + b"".join(repr(stage).encode("utf-8") for stage in stages) + b"]").hexdigest()
-        _same(digest, row["reset_prefix_stages_sha256"], "U actual per-frame stage digest")
+    _same(gate.get("completed_count"), c.SMOKE_TRAJECTORY_COUNT, "smoke report census")
 
 
 def _formal_freeze(evidence, binding):
     freeze = _json_ref(evidence["freeze"], "formal freeze", "protocol_freeze")
     _same(freeze.get("protocol_version"), "v1.0", "formal freeze version")
     _same(freeze.get("binding"), binding, "formal freeze runtime")
-    for key in ("protocol", "baseline", "end_to_end_gate", "architecture_gate", "exposure"):
+    for key in ("protocol", "end_to_end_gate", "architecture_gate", "exposure"):
         _same(freeze.get(f"{key}_sha256"), evidence[key]["sha256"], f"freeze {key}")
     _sources(freeze.get("sources"), "freeze review")
     exposure = _json_ref(evidence["exposure"], "prior exposure", "prior_exposure")
@@ -552,12 +471,17 @@ def _validate_request(request):
     normalized = [c.validate_row(row, store.stage) for row in rows]
     if len({row["row_id"] for row in normalized}) != len(rows):
         raise ExpansionLaunchError("Duplicate execution row")
+    if stage in ("end_to_end_smoke", "formal"):
+        try:
+            c.policy_variant_for_rows(normalized)
+        except c.ExpansionContractError as error:
+            raise ExpansionLaunchError(str(error)) from error
     evidence = request["evidence"]
     required = BASE_EVIDENCE | ({"cpu_gate"} if stage != "cpu_prepare" else set())
     if stage in ("end_to_end_smoke", "formal"):
         required |= {"architecture_gate"}
     if stage == "formal":
-        required |= {"end_to_end_gate", "baseline", "freeze", "exposure"}
+        required |= {"end_to_end_gate", "freeze", "exposure"}
     if not isinstance(evidence, Mapping) or set(evidence) != required:
         raise ExpansionLaunchError(f"Stage {stage} requires exactly evidence {sorted(required)}")
     protocol = _read_ref(evidence["protocol"], "protocol snapshot")
@@ -579,7 +503,6 @@ def _validate_request(request):
         _architecture_gate(evidence["architecture_gate"], binding)
     if stage == "formal":
         _smoke_gate(evidence["end_to_end_gate"], binding)
-        _baseline(evidence["baseline"], binding)
         _formal_freeze(evidence, binding)
     return {"policy_source": policy, "benchmark_source": benchmark,
             "environment": environment, "checkpoint": checkpoint, "binding": binding}
@@ -630,6 +553,11 @@ class ValidatedExecutionPlan:
     def benchmark_root(self): return Path(self.benchmark_source["root"])
     @property
     def checkpoint_dir(self): return Path(self.checkpoint["checkpoint_dir"])
+    @property
+    def policy_variant(self):
+        return c.policy_variant_for_rows(
+            self.rows, allow_empty_architecture=self.stage == "architecture_smoke",
+        )
     @property
     def live_checkpoint_verification_required(self): return True
 
@@ -698,11 +626,11 @@ def deep_validate_runtime_evidence(plan: ValidatedExecutionPlan) -> dict:
         gate = _json_ref(plan.payload["request"]["evidence"]["end_to_end_gate"], "source smoke audit")
         smoke = ExpansionRunStore.open(Path(gate["run_manifest"]["path"]).parent)
         completed = smoke.completed_rows()  # Includes actual videos, NPZ and every trace.
-        _same(sorted(completed), list(range(48)), "deep complete smoke census")
+        _same(sorted(completed), list(range(c.SMOKE_TRAJECTORY_COUNT)), "deep complete smoke census")
         for record in gate["results"]:
             _same(str(completed[record["row_id"]]), record["result"]["path"], "deep smoke accepted attempt")
             _same(sha256_file(completed[record["row_id"]]), record["result"]["sha256"], "deep smoke accepted result")
-        checked = 48
+        checked = c.SMOKE_TRAJECTORY_COUNT
     return {"execution_identity": plan.execution_identity, "stage": plan.stage,
             "scope": "controller-startup source audit; not GPU execution or live checkpoint verification",
             "source_smoke_raw_episodes_audited": checked,

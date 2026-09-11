@@ -231,7 +231,9 @@ def _sha(path):
 
 
 def _wait_ready(plan, supervisor, port, deadline):
+    from experiments.uniform_keyframe_expansion.contract import policy_variant_for_rows
     from experiments.uniform_keyframe_expansion.serving import ExpansionClient
+    policy_variant = policy_variant_for_rows(plan.rows)
     while True:
         if supervisor.stop_event.is_set() or time.monotonic() >= deadline:
             raise TimeoutError("Resident policy readiness timed out or was interrupted")
@@ -239,6 +241,7 @@ def _wait_ready(plan, supervisor, port, deadline):
             raise RuntimeError("Policy exited before readiness")
         try:
             with ExpansionClient("127.0.0.1", port, expected_execution_identity=plan.execution_identity,
+                                 expected_policy_variant=policy_variant,
                                  connect_timeout=1, response_timeout=1) as client:
                 metadata = client.get_server_metadata()
             owned = supervisor.children["policy"]
@@ -334,10 +337,12 @@ def run_child(plan, role, *, port, listen_fd=None, row_id=None):
         verify_worker(plan, role, row_id)
         from experiments.uniform_keyframe_expansion.server_bootstrap import load_authorized_policy
         from experiments.uniform_keyframe_expansion.serving import ExpansionPolicyServer
+        from experiments.uniform_keyframe_expansion.contract import policy_variant_for_rows
         loaded = load_authorized_policy(plan)
         directory = Path(plan.store_root) / "executions" / plan.execution_identity["execution_id"]
         _write(directory / "live_policy_provenance.json", loaded.provenance)
         ExpansionPolicyServer(loaded.policy, execution_identity=plan.execution_identity,
+                              policy_variant=policy_variant_for_rows(plan.rows),
                               host="127.0.0.1", port=port, listen_fd=listen_fd).serve_forever()
         raise RuntimeError("Resident policy server returned unexpectedly")
     if role != "simulator" or type(row_id) is not int:

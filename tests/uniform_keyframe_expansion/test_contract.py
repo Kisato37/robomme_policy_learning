@@ -18,13 +18,13 @@ def test_formal_matrix_preserves_canonical_parent_population():
     from experiments.keyframe_neighborhood_sampling.formal_matrix import build_formal_matrix as neighborhood
 
     matrix = c.build_formal_matrix()
-    assert matrix["trajectory_count"] == len(matrix["rows"]) == 1600
+    assert matrix["trajectory_count"] == len(matrix["rows"]) == 2400
     assert matrix["tasks"] == parent()["tasks"] == neighborhood()["tasks"]
     assert matrix["episode_ids"] == parent()["episode_ids"] == neighborhood()["episode_ids"] == list(range(50))
-    assert Counter(row["arm"] for row in matrix["rows"]) == {"UK48": 800, "UN48": 800}
+    assert Counter(row["arm"] for row in matrix["rows"]) == {"U": 800, "UK48": 800, "UN48": 800}
     assert all(row["dataset"] == "test" and row["max_steps"] == 1300 for row in matrix["rows"])
-    assert [row["row_id"] for row in matrix["rows"]] == list(range(1600))
-    assert len({(r["task"], r["episode_id"], r["arm"]) for r in matrix["rows"]}) == 1600
+    assert [row["row_id"] for row in matrix["rows"]] == list(range(2400))
+    assert len({(r["task"], r["episode_id"], r["arm"]) for r in matrix["rows"]}) == 2400
     c.validate_matrix(matrix, "formal")
     for row in matrix["rows"]:
         assert c.validate_row(row, "formal") == row
@@ -36,20 +36,20 @@ def test_formal_matrix_preserves_canonical_parent_population():
     assert neighborhood()["arms"] == ["OC3", "OC5"]
 
 
-def test_smoke_is_32_short_and_16_terminal_val_only():
+def test_smoke_is_48_short_and_16_terminal_val_only():
     matrix = c.build_smoke_matrix()
-    assert matrix["trajectory_count"] == len(matrix["rows"]) == 48
+    assert matrix["trajectory_count"] == len(matrix["rows"]) == 64
     assert matrix["short_stop_on_official_terminal"] is True
-    assert Counter(r["trajectory_kind"] for r in matrix["rows"]) == {"short": 32, "terminal": 16}
+    assert Counter(r["trajectory_kind"] for r in matrix["rows"]) == {"short": 48, "terminal": 16}
     for index, task in enumerate(c.FORMAL_TASKS):
-        rows = matrix["rows"][index * 3:index * 3 + 3]
-        assert [r["task"] for r in rows] == [task] * 3
-        assert [r["arm"] for r in rows] == ["UK48", "UN48", c.EXPANSION_ARMS[index % 2]]
-        assert [r["max_steps"] for r in rows] == [64, 64, 1300]
+        rows = matrix["rows"][index * 4:index * 4 + 4]
+        assert [r["task"] for r in rows] == [task] * 4
+        assert [r["arm"] for r in rows] == ["U", "UK48", "UN48", c.FORMAL_ARMS[index % 3]]
+        assert [r["max_steps"] for r in rows] == [64, 64, 64, 1300]
         for row in rows:
             assert row["episode_id"] == 0 and row["dataset"] == "val"
             assert c.validate_row(row, "smoke") == row
-    assert len({(r["task"], r["episode_id"], r["arm"], r["trajectory_kind"]) for r in matrix["rows"]}) == 48
+    assert len({(r["task"], r["episode_id"], r["arm"], r["trajectory_kind"]) for r in matrix["rows"]}) == 64
     c.validate_matrix(matrix, "smoke")
     formal_contexts = {(r["dataset"], r["task"], r["episode_id"]) for r in c.build_formal_matrix()["rows"]}
     smoke_contexts = {(r["dataset"], r["task"], r["episode_id"]) for r in matrix["rows"]}
@@ -77,7 +77,7 @@ def test_matrix_rejects_any_semantic_mutation(stage, mutation):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("row_id", False), ("row_id", 0.0), ("row_id", -1), ("row_id", 1600),
+    ("row_id", False), ("row_id", 0.0), ("row_id", -1), ("row_id", 2400),
     ("episode_id", False), ("episode_id", 50), ("task", "UnknownTask"),
     ("arm", "OC"), ("dataset", "val"), ("trajectory_kind", "terminal"),
     ("max_steps", 64), ("policy_seed", 7),
@@ -91,7 +91,8 @@ def test_row_binding_rejects_invalid_or_noncanonical_fields(field, value):
 
 def test_selector_config_is_independent_reproducible_and_exact():
     rows = c.build_formal_matrix()["rows"]
-    uk, un = c.build_selector_config(rows[0]), c.build_selector_config(rows[1])
+    u, uk, un = (c.build_selector_config(rows[index]) for index in range(3))
+    assert u == {"arm": "U", "split": "test", "task": "BinFill", "episode_id": 0}
     assert uk["arm"] == "UK48" and un["arm"] == "UN48"
     assert uk["random_seeds"] == un["random_seeds"]
     assert len(un["random_seeds"]) == 82
@@ -100,8 +101,9 @@ def test_selector_config_is_independent_reproducible_and_exact():
     assert un["random_seeds"][0] == int.from_bytes(hashlib.sha256(compact).digest()[:8], "big")
     assert un["random_seeds"][81] == derive_expansion_seed("test", "BinFill", 0, 81)
     assert un["seed_table_sha256"] == hashlib.sha256(json.dumps(un["random_seeds"], separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
-    assert un == c.build_selector_config(rows[1])
-    c.validate_selector_config(un, rows[1])
+    assert un == c.build_selector_config(rows[2])
+    c.validate_selector_config(u, rows[0])
+    c.validate_selector_config(un, rows[2])
     for mutation in ("seed", "digest", "arm"):
         bad = deepcopy(un)
         if mutation == "seed":
@@ -112,7 +114,7 @@ def test_selector_config_is_independent_reproducible_and_exact():
         else:
             bad["arm"] = "UK48"
         with pytest.raises(c.ExpansionContractError):
-            c.validate_selector_config(bad, rows[1])
+            c.validate_selector_config(bad, rows[2])
 
 
 def test_seed_manifests_are_split_disjoint_unique_and_hash_bound():
@@ -161,17 +163,12 @@ def _attested_manifest(template):
         "cpu_gate": {"status": "passed", "report_sha256": "d" * 64},
         "gpu_smoke_gate": {"status": "passed", "report_sha256": "e" * 64},
     })
-    evidence["u_baseline"] = {
-        "status": "verified", "source_run_id": "synthetic-test-fixture-not-real-run",
-        "artifact_manifest_sha256": "f" * 64, "matching_initial_conditions": True,
-        "matching_execution_provenance": True, "matching_seed_mapping": True,
-        "checkpoint_matches": True,
-    }
     return evidence
 
 
 def test_readiness_defaults_blocked_and_is_not_a_launch_authorization(readiness_template):
-    assert readiness_template["u_baseline"]["status"] == "unresolved"
+    assert readiness_template["fresh_u_arm_in_formal_matrix"] is True
+    assert readiness_template["same_run_initial_pairing_required"] is True
     assert readiness_template["explicit_formal_user_approval"] is False
     assert readiness_template["readiness_scope"] == "planning-manifest-only-not-launch-authorization"
     with pytest.raises(c.ExpansionContractError):
@@ -198,10 +195,10 @@ def test_formal_needs_gate_evidence_not_only_a_pass_flag(readiness_template, gat
         c.validate_formal_readiness(evidence)
 
 
-@pytest.mark.parametrize("field", ["matching_initial_conditions", "matching_execution_provenance", "matching_seed_mapping", "checkpoint_matches"])
-def test_formal_primary_baseline_cannot_be_substituted_by_new_arm_control(readiness_template, field):
+@pytest.mark.parametrize("field", ["fresh_u_arm_in_formal_matrix", "same_run_initial_pairing_required"])
+def test_formal_requires_fresh_same_run_u_controls(readiness_template, field):
     evidence = _attested_manifest(readiness_template)
-    evidence["u_baseline"][field] = False
+    evidence[field] = False
     with pytest.raises(c.ExpansionContractError):
         c.validate_formal_readiness(evidence)
 

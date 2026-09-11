@@ -22,6 +22,13 @@ from openpi.serving.websocket_policy_server import (
 from websockets.exceptions import ConnectionClosed
 import websockets.sync.client
 
+from experiments.uniform_keyframe_expansion.contract import (
+    EXPANDED_POLICY_VARIANT, U_POLICY_VARIANT,
+)
+from mme_vla_suite.shared.keyframe_oracle_sampling import (
+    FORMAL_SEED_DATASET, FORMAL_SEED_SCOPE, SMOKE_SEED_DATASET,
+    SMOKE_SEED_SCOPE, derive_random_seed, derive_smoke_random_seed,
+)
 from mme_vla_suite.shared.uniform_keyframe_config import (
     EXPANSION_FAMILY, RELEASED_HISTORY_CONFIG, canonical_json,
     expanded_history_mapping, payload_digest,
@@ -66,8 +73,21 @@ def _identity(identity: Mapping) -> dict:
 
 
 def _selector_config(config: Mapping) -> dict:
+    if not isinstance(config, Mapping):
+        raise ValueError("Reset needs the complete new-family selector configuration")
+    if config.get("arm") == "U":
+        required = {"arm", "split", "task", "episode_id"}
+        if set(config) != required:
+            raise ValueError("U reset needs only its exact non-random selector context")
+        if (config["split"] == "val" and config["episode_id"] != 0
+                or config["split"] == "test" and not 0 <= config["episode_id"] < 50):
+            raise ValueError("Reset episode is outside the frozen evaluation population")
+        # Validate task/split/strict integer ID through the shared derivation,
+        # without storing or exposing a random selector for the deterministic U arm.
+        derive_expansion_seed(config["split"], config["task"], config["episode_id"], 0)
+        return deepcopy(dict(config))
     required = {"arm", "split", "task", "episode_id", "random_seeds", "seed_table_sha256"}
-    if not isinstance(config, Mapping) or set(config) != required or config["arm"] not in EXPANSION_ARMS:
+    if set(config) != required or config["arm"] not in EXPANSION_ARMS:
         raise ValueError("Reset needs the complete new-family selector configuration")
     # Derivation validates strict integer IDs, canonical task/split and call range.
     seeds = [derive_expansion_seed(config["split"], config["task"], config["episode_id"], index)
@@ -78,6 +98,31 @@ def _selector_config(config: Mapping) -> dict:
     _same(config["random_seeds"], seeds, "Selector seed table")
     _same(config["seed_table_sha256"], payload_digest(seeds), "Selector seed-table digest")
     return deepcopy(dict(config))
+
+
+def _u_compatibility_config(config: Mapping) -> dict:
+    """Translate a deterministic study-U reset to the released audit schema.
+
+    The compatibility seeds are validated but never consumed by arm U. They are
+    deliberately absent from the study selector manifest to avoid implying that
+    randomized selection occurs in U.
+    """
+    config = _selector_config(config)
+    if config["arm"] != "U":
+        raise ValueError("Only U has a released-selector compatibility mapping")
+    if config["split"] == FORMAL_SEED_DATASET:
+        scope, derive = FORMAL_SEED_SCOPE, derive_random_seed
+    elif config["split"] == SMOKE_SEED_DATASET:
+        scope, derive = SMOKE_SEED_SCOPE, derive_smoke_random_seed
+    else:  # pragma: no cover - _selector_config already rejects this
+        raise ValueError("Unknown U split")
+    seeds = [derive(config["task"], config["episode_id"], index)
+             for index in range(MAX_POLICY_CALLS)]
+    return {
+        "arm": "U", "task": config["task"], "episode_id": config["episode_id"],
+        "random_seeds": seeds, "seed_table_sha256": payload_digest(seeds),
+        "seed_table_scope": scope, "seed_table_dataset": config["split"],
+    }
 
 
 def _positive_pid(value) -> None:
@@ -106,17 +151,24 @@ def validate_reset_response(reply: Mapping, config: Mapping) -> dict:
     return deepcopy(dict(evidence))
 
 
-def validate_server_metadata(metadata: Mapping, expected_execution_identity: Mapping) -> dict:
+def validate_server_metadata(metadata: Mapping, expected_execution_identity: Mapping,
+                             expected_policy_variant: str = EXPANDED_POLICY_VARIANT) -> dict:
     identity = _identity(expected_execution_identity)
     if not isinstance(metadata, Mapping):
         raise ValueError("Server handshake must be a mapping")
-    _, expected = expanded_history_mapping(RELEASED_HISTORY_CONFIG)
+    if expected_policy_variant not in (U_POLICY_VARIANT, EXPANDED_POLICY_VARIANT):
+        raise ValueError("Unknown expected policy variant")
+    _, expanded = expanded_history_mapping(RELEASED_HISTORY_CONFIG)
+    source_digest = payload_digest(RELEASED_HISTORY_CONFIG)
+    effective_budget = 512 if expected_policy_variant == U_POLICY_VARIANT else 768
+    effective_digest = source_digest if expected_policy_variant == U_POLICY_VARIANT else expanded["effective_history_config_sha256"]
     for key, value in {
         "wire_schema": 1, "experiment_family": EXPANSION_FAMILY,
-        "effective_memory_budget": 768, "evaluation_policy_seed": 7,
+        "policy_variant": expected_policy_variant,
+        "effective_memory_budget": effective_budget, "evaluation_policy_seed": 7,
         "resident_policy": True, "strict_weight_tree_load": True,
-        "effective_history_config_sha256": expected["effective_history_config_sha256"],
-        "source_history_config_sha256": expected["source_history_config_sha256"],
+        "effective_history_config_sha256": effective_digest,
+        "source_history_config_sha256": source_digest,
         "direct_execution": identity,
     }.items():
         _same(metadata.get(key), value, f"Server metadata {key}")
@@ -124,7 +176,7 @@ def validate_server_metadata(metadata: Mapping, expected_execution_identity: Map
     return deepcopy(dict(metadata))
 
 
-def load_expansion_policy(checkpoint_dir: str | Path):
+def load_study_policy(checkpoint_dir: str | Path, policy_variant: str):
     """Actual opt-in strict loader, called only by an authorized future launcher.
 
     This doesn't attest archive hashes or authorize GPU initialization. The
@@ -137,40 +189,69 @@ def load_expansion_policy(checkpoint_dir: str | Path):
     checkpoint_dir = Path(checkpoint_dir)
     if checkpoint_dir.name != "79999":
         raise ValueError("Expansion requires checkpoint 79999")
-    return create_trained_policy(
-        get_config("mme_vla_suite"), checkpoint_dir, seed=7,
-        experimental_memory_expansion=EXPANSION_FAMILY,
-    )
+    if policy_variant == U_POLICY_VARIANT:
+        return create_trained_policy(
+            get_config("mme_vla_suite"), checkpoint_dir, seed=7,
+            strict_weight_tree_load=True,
+        )
+    if policy_variant == EXPANDED_POLICY_VARIANT:
+        return create_trained_policy(
+            get_config("mme_vla_suite"), checkpoint_dir, seed=7,
+            experimental_memory_expansion=EXPANSION_FAMILY,
+            strict_weight_tree_load=True,
+        )
+    raise ValueError("Unknown study policy variant")
+
+
+def load_expansion_policy(checkpoint_dir: str | Path):
+    """Backward-compatible explicit loader for the 768-token architecture probe."""
+    return load_study_policy(checkpoint_dir, EXPANDED_POLICY_VARIANT)
 
 
 class ExpansionPolicyServer(_TransportServer):
     """One initialized episode per connection, one active connection at a time."""
 
-    def __init__(self, policy, *, execution_identity: Mapping, host="127.0.0.1",
-                 port=None, listen_fd=None):
+    def __init__(self, policy, *, execution_identity: Mapping,
+                 policy_variant: str = EXPANDED_POLICY_VARIANT,
+                 host="127.0.0.1", port=None, listen_fd=None):
         identity = _identity(execution_identity)
-        _, expected = expanded_history_mapping(RELEASED_HISTORY_CONFIG)
+        if policy_variant not in (U_POLICY_VARIANT, EXPANDED_POLICY_VARIANT):
+            raise ValueError("Unknown resident policy variant")
+        from omegaconf import OmegaConf
+        _, expanded = expanded_history_mapping(RELEASED_HISTORY_CONFIG)
+        source_digest = payload_digest(RELEASED_HISTORY_CONFIG)
         # This metadata is an audited loader declaration, not independent proof
         # of the checkpoint contents. Real checkpoint smoke remains mandatory.
-        evidence = policy.metadata.get("uniform_keyframe_expansion")
-        _same(evidence, expected, "Policy expansion configuration evidence")
+        if policy_variant == EXPANDED_POLICY_VARIANT:
+            evidence = policy.metadata.get("uniform_keyframe_expansion")
+            _same(evidence, expanded, "Policy expansion configuration evidence")
+            effective_budget = 768
+            effective_digest = expanded["effective_history_config_sha256"]
+        else:
+            _same(OmegaConf.to_container(policy.config, resolve=True), RELEASED_HISTORY_CONFIG,
+                  "Policy released U history configuration")
+            effective_budget = 512
+            effective_digest = source_digest
         _same(policy._seed, 7, "Policy RNG seed")
         metadata = {
             "wire_schema": 1, "experiment_family": EXPANSION_FAMILY,
-            "effective_memory_budget": 768, "evaluation_policy_seed": 7,
+            "policy_variant": policy_variant,
+            "effective_memory_budget": effective_budget, "evaluation_policy_seed": 7,
             "resident_policy": True, "strict_weight_tree_load": True,
-            "source_history_config_sha256": expected["source_history_config_sha256"],
-            "effective_history_config_sha256": expected["effective_history_config_sha256"],
+            "source_history_config_sha256": source_digest,
+            "effective_history_config_sha256": effective_digest,
             "model_process_pid": os.getpid(),
         }
         super().__init__(policy, host=host, port=port, metadata=metadata,
                          listen_fd=listen_fd, **identity)
         self._active_trajectory = None
         self._hard_failure = None
+        self._policy_variant = policy_variant
 
     async def _handler(self, websocket):
         packer = msgpack_numpy.Packer()
         initialized = False
+        trajectory_config = None
         operation = None
         try:
             await websocket.send(packer.pack(self._metadata))
@@ -199,7 +280,11 @@ class ExpansionPolicyServer(_TransportServer):
                     self._policy.reset()
                     state = self._policy.reset_evidence()
                     _same(state, RESET_STATE, "Policy reset state")
-                    self._policy.configure_uniform_keyframe_expansion(config)
+                    if self._policy_variant == U_POLICY_VARIANT:
+                        self._policy.configure_keyframe_selector(_u_compatibility_config(config))
+                    else:
+                        self._policy.configure_uniform_keyframe_expansion(config)
+                    trajectory_config = config
                     initialized = True
                     reply = {
                         "operation": operation, "reset_finished": True,
@@ -232,6 +317,16 @@ class ExpansionPolicyServer(_TransportServer):
                     if type(step) is not int or not 0 <= step <= 1300:
                         raise ValueError("Invalid inference environment step")
                     reply = dict(self._policy.infer(observation))
+                    if self._policy_variant == U_POLICY_VARIANT:
+                        trace = dict(reply.get("selector_trace") or {})
+                        trace.update({
+                            "experiment_family": EXPANSION_FAMILY,
+                            "arm": "U", "split": trajectory_config["split"],
+                            "step_idx": trace.get("current_history_index"),
+                            "effective_memory_budget": 512,
+                            "base_uniform_token_budget": 512,
+                        })
+                        reply["selector_trace"] = trace
                     reply["operation"] = operation
                 else:
                     raise ValueError("Unknown expansion request operation")
@@ -264,6 +359,7 @@ class ExpansionClient:
     """Synchronous bounded client; never reconnects or retries implicitly."""
 
     def __init__(self, host: str, port: int, *, expected_execution_identity: Mapping,
+                 expected_policy_variant: str = EXPANDED_POLICY_VARIANT,
                  connect_timeout: float = 10, response_timeout: float = 600):
         identity = _identity(expected_execution_identity)
         for value in (connect_timeout, response_timeout):
@@ -284,7 +380,7 @@ class ExpansionClient:
             )
             metadata = self._unpack(self._ws.recv(timeout=connect_timeout))
             try:
-                self._metadata = validate_server_metadata(metadata, identity)
+                self._metadata = validate_server_metadata(metadata, identity, expected_policy_variant)
             except (TypeError, ValueError) as exc:
                 raise ExpansionRemoteError(f"Server handshake rejected: {exc}") from exc
         except BaseException:

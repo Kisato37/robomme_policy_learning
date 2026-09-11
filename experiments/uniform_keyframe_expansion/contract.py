@@ -18,6 +18,9 @@ from mme_vla_suite.shared.uniform_keyframe_expansion import derive_expansion_see
 
 PROTOCOL_FAMILY = "uniform_keyframe_expansion-v1"
 EXPANSION_ARMS = ("UK48", "UN48")
+FORMAL_ARMS = ("U", *EXPANSION_ARMS)
+U_POLICY_VARIANT = "released_u32_512"
+EXPANDED_POLICY_VARIANT = "expanded_uk_un_48_768"
 FORMAL_EPISODE_IDS = tuple(range(50))
 FORMAL_DATASET = "test"
 SMOKE_DATASET = "val"
@@ -37,8 +40,8 @@ CHECKPOINT_ID = 79999
 CHECKPOINT_MODEL = "Yinpei/perceptual-framesamp-modul"
 CHECKPOINT_ARCHIVE_SHA256 = "2bfde48a0e9c616c87afcac5359b69f281689765e1af3fecbbec5c918e6faa62"
 MASTER_SELECTOR_SEED = 2026091001
-FORMAL_TRAJECTORY_COUNT = len(FORMAL_TASKS) * len(FORMAL_EPISODE_IDS) * len(EXPANSION_ARMS)
-SMOKE_TRAJECTORY_COUNT = len(FORMAL_TASKS) * (len(EXPANSION_ARMS) + 1)
+FORMAL_TRAJECTORY_COUNT = len(FORMAL_TASKS) * len(FORMAL_EPISODE_IDS) * len(FORMAL_ARMS)
+SMOKE_TRAJECTORY_COUNT = len(FORMAL_TASKS) * (len(FORMAL_ARMS) + 1)
 
 
 class ExpansionContractError(ValueError):
@@ -102,17 +105,17 @@ def _row(rows: list[dict[str, Any]], *, task: str, episode: int, arm: str,
 
 
 def build_formal_matrix() -> dict[str, Any]:
-    """The two NEW arms only: 16 canonical tasks x 50 test episodes x 2."""
+    """Same-host study: 16 canonical tasks x 50 test episodes x 3 arms."""
     rows: list[dict[str, Any]] = []
     for task in FORMAL_TASKS:
         for episode in FORMAL_EPISODE_IDS:
-            for arm in EXPANSION_ARMS:
+            for arm in FORMAL_ARMS:
                 _row(rows, task=task, episode=episode, arm=arm, kind="formal",
                      max_steps=MAX_STEPS, dataset=FORMAL_DATASET)
     return {
         "schema_version": 1, "protocol_family": PROTOCOL_FAMILY,
         "order": ["task", "episode_id", "arm"], "tasks": list(FORMAL_TASKS),
-        "episode_ids": list(FORMAL_EPISODE_IDS), "arms": list(EXPANSION_ARMS),
+        "episode_ids": list(FORMAL_EPISODE_IDS), "arms": list(FORMAL_ARMS),
         "dataset": FORMAL_DATASET, "max_steps": MAX_STEPS,
         "trajectory_kind": "formal", "trajectory_count": FORMAL_TRAJECTORY_COUNT,
         "rows": rows,
@@ -120,21 +123,21 @@ def build_formal_matrix() -> dict[str, Any]:
 
 
 def build_smoke_matrix() -> dict[str, Any]:
-    """32 short (64 steps or official terminal), plus 16 full terminal paths."""
+    """48 short (64 steps or official terminal), plus 16 full terminal paths."""
     rows: list[dict[str, Any]] = []
     terminal_arms: dict[str, str] = {}
     for index, task in enumerate(FORMAL_TASKS):
-        for arm in EXPANSION_ARMS:
+        for arm in FORMAL_ARMS:
             _row(rows, task=task, episode=SMOKE_EPISODE_ID, arm=arm, kind="short",
                  max_steps=SHORT_MAX_STEPS, dataset=SMOKE_DATASET)
-        terminal_arm = EXPANSION_ARMS[index % len(EXPANSION_ARMS)]
+        terminal_arm = FORMAL_ARMS[index % len(FORMAL_ARMS)]
         terminal_arms[task] = terminal_arm
         _row(rows, task=task, episode=SMOKE_EPISODE_ID, arm=terminal_arm, kind="terminal",
              max_steps=MAX_STEPS, dataset=SMOKE_DATASET)
     return {
         "schema_version": 1, "protocol_family": PROTOCOL_FAMILY,
         "order": ["task", "trajectory_kind", "arm"], "tasks": list(FORMAL_TASKS),
-        "episode_id": SMOKE_EPISODE_ID, "arms": list(EXPANSION_ARMS),
+        "episode_id": SMOKE_EPISODE_ID, "arms": list(FORMAL_ARMS),
         "terminal_arms": terminal_arms, "dataset": SMOKE_DATASET,
         "short_max_steps": SHORT_MAX_STEPS, "terminal_max_steps": MAX_STEPS,
         "short_stop_on_official_terminal": True,
@@ -170,19 +173,19 @@ def validate_row(row: Mapping[str, Any], stage: str | None = None) -> dict[str, 
         raise ExpansionContractError("Stage must be exactly 'formal' or 'smoke'")
     if type(row_id) is not int or not 0 <= row_id < count:
         raise ExpansionContractError(f"Invalid {stage} row_id")
-    # Validate a single row without constructing all 1,600 rows for every seed
+    # Validate a single row without constructing all 2,400 rows for every seed
     # table.  Tests compare this arithmetic binding to every generated row.
     if stage == "formal":
-        context_index, arm_index = divmod(row_id, len(EXPANSION_ARMS))
+        context_index, arm_index = divmod(row_id, len(FORMAL_ARMS))
         task_index, episode = divmod(context_index, len(FORMAL_EPISODE_IDS))
-        arm, kind, max_steps, dataset = EXPANSION_ARMS[arm_index], "formal", MAX_STEPS, FORMAL_DATASET
+        arm, kind, max_steps, dataset = FORMAL_ARMS[arm_index], "formal", MAX_STEPS, FORMAL_DATASET
     else:
-        task_index, offset = divmod(row_id, len(EXPANSION_ARMS) + 1)
+        task_index, offset = divmod(row_id, len(FORMAL_ARMS) + 1)
         episode, dataset = SMOKE_EPISODE_ID, SMOKE_DATASET
-        if offset < len(EXPANSION_ARMS):
-            arm, kind, max_steps = EXPANSION_ARMS[offset], "short", SHORT_MAX_STEPS
+        if offset < len(FORMAL_ARMS):
+            arm, kind, max_steps = FORMAL_ARMS[offset], "short", SHORT_MAX_STEPS
         else:
-            arm, kind, max_steps = EXPANSION_ARMS[task_index % len(EXPANSION_ARMS)], "terminal", MAX_STEPS
+            arm, kind, max_steps = FORMAL_ARMS[task_index % len(FORMAL_ARMS)], "terminal", MAX_STEPS
     expected = {
         "row_id": row_id, "task": FORMAL_TASKS[task_index], "episode_id": episode,
         "arm": arm, "trajectory_kind": kind, "max_steps": max_steps, "dataset": dataset,
@@ -199,6 +202,14 @@ def build_selector_config(row: Mapping[str, Any]) -> dict[str, Any]:
     result, wall-clock timestamp, task order, host or global RNG is consulted.
     """
     exact = validate_row(row)
+    if exact["arm"] == "U":
+        # U has no randomized selector. The server derives an unused compatibility
+        # seed table internally only because the released policy's audit adapter
+        # expects the older reset schema; it cannot affect U's literal sampler.
+        return {
+            "arm": "U", "task": exact["task"], "episode_id": exact["episode_id"],
+            "split": exact["dataset"],
+        }
     seeds = [derive_expansion_seed(exact["dataset"], exact["task"], exact["episode_id"], call)
              for call in range(MAX_POLICY_CALLS)]
     return {
@@ -222,8 +233,13 @@ def build_seed_manifest(stage: str) -> dict[str, Any]:
         if context in seen:
             continue
         seen.add(context)
-        config = build_selector_config(row)
-        records.append({key: value for key, value in config.items() if key != "arm"})
+        seeds = [derive_expansion_seed(row["dataset"], row["task"], row["episode_id"], call)
+                 for call in range(MAX_POLICY_CALLS)]
+        records.append({
+            "split": row["dataset"], "task": row["task"],
+            "episode_id": row["episode_id"], "random_seeds": seeds,
+            "seed_table_sha256": canonical_sha256(seeds),
+        })
     payload = {
         "schema_version": 1, "protocol_family": PROTOCOL_FAMILY, "stage": stage,
         "master_selector_seed": MASTER_SELECTOR_SEED,
@@ -250,14 +266,8 @@ def build_readiness_template() -> dict[str, Any]:
         "formal_seed_manifest_sha256": build_seed_manifest("formal")["manifest_sha256"],
         "cpu_gate": {"status": "pending", "report_sha256": None},
         "gpu_smoke_gate": {"status": "pending", "report_sha256": None},
-        "u_baseline": {
-            "status": "unresolved", "source_run_id": None,
-            "artifact_manifest_sha256": None,
-            "matching_initial_conditions": False,
-            "matching_execution_provenance": False,
-            "matching_seed_mapping": False,
-            "checkpoint_matches": False,
-        },
+        "fresh_u_arm_in_formal_matrix": True,
+        "same_run_initial_pairing_required": True,
     }
 
 
@@ -292,17 +302,28 @@ def validate_formal_readiness(evidence: Mapping[str, Any]) -> None:
         if not isinstance(gate, Mapping) or set(gate) != {"status", "report_sha256"} or gate["status"] != "passed":
             raise ExpansionContractError(f"Formal launch remains blocked: {name}")
         _sha(gate["report_sha256"], 64, f"{name} report_sha256")
-    baseline = evidence["u_baseline"]
-    if not isinstance(baseline, Mapping) or set(baseline) != set(template["u_baseline"]):
-        raise ExpansionContractError("Primary U baseline evidence fields are invalid")
-    if baseline["status"] != "verified":
-        raise ExpansionContractError("Primary UK48 minus U comparison requires a verified U baseline")
-    if not isinstance(baseline["source_run_id"], str) or not baseline["source_run_id"].strip():
-        raise ExpansionContractError("U baseline source_run_id is required")
-    _sha(baseline["artifact_manifest_sha256"], 64, "U artifact_manifest_sha256")
-    for key in ("matching_initial_conditions", "matching_execution_provenance", "matching_seed_mapping", "checkpoint_matches"):
-        if baseline[key] is not True:
-            raise ExpansionContractError(f"Primary U baseline is not verified: {key}")
+    for key in ("fresh_u_arm_in_formal_matrix", "same_run_initial_pairing_required"):
+        if evidence[key] is not True:
+            raise ExpansionContractError(f"Formal launch remains blocked: {key}")
+
+
+def policy_variant_for_arm(arm: str) -> str:
+    if arm == "U":
+        return U_POLICY_VARIANT
+    if arm in EXPANSION_ARMS:
+        return EXPANDED_POLICY_VARIANT
+    raise ExpansionContractError(f"Unknown study arm: {arm!r}")
+
+
+def policy_variant_for_rows(rows: list[Mapping[str, Any]], *, allow_empty_architecture: bool = False) -> str:
+    if not rows:
+        if allow_empty_architecture:
+            return EXPANDED_POLICY_VARIANT
+        raise ExpansionContractError("Trajectory policy variant requires at least one row")
+    variants = {policy_variant_for_arm(row.get("arm")) for row in rows}
+    if len(variants) != 1:
+        raise ExpansionContractError("One resident policy process cannot mix 512- and 768-token rows")
+    return variants.pop()
 
 
 def main() -> None:
@@ -323,7 +344,7 @@ def main() -> None:
         "seed_context_count": seeds["context_count"],
         "policy_calls_per_seed_table": MAX_POLICY_CALLS,
         "inference_contract": frozen_inference_contract(),
-        "u_baseline_status": "unresolved", "launch_authorized": False,
+        "fresh_u_arm_in_matrix": True, "launch_authorized": False,
     }, indent=2, ensure_ascii=True))
 
 
